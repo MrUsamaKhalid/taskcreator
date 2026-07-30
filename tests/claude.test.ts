@@ -6,11 +6,19 @@ import { ENDPOINT_MAX_TOKENS, ENDPOINT_MODEL, MODEL_CAPS } from "@/lib/config";
 import type { Endpoint } from "@/lib/config";
 import {
   buildContext,
+  buildTestRunBlocks,
   citesFiles,
   countBreakpoints,
   type ContextAttachment,
 } from "@/lib/claude/context";
-import { SHARED_SYSTEM, maxTokensExceedsModel, shapeRequest } from "@/lib/claude/request";
+import { gradePayload } from "@/lib/claude/prompts";
+import { costBreakdown, isPricedModel } from "@/lib/pricing";
+import {
+  SHARED_SYSTEM,
+  maxTokensExceedsModel,
+  shapeRequest,
+  shapeTestRun,
+} from "@/lib/claude/request";
 
 const ENDPOINTS: Endpoint[] = ["review", "checklist", "compile", "testRun", "grade"];
 
@@ -279,7 +287,7 @@ test("Files beta is sent only when a block actually cites a file_id", () => {
 test("the system prompt is byte-identical across endpoints, or caching breaks", () => {
   const systems = ENDPOINTS.map(
     (endpoint) =>
-      shapeRequest({ endpoint, blocks: ctx(), instruction: "go" }).system[0].text,
+      shapeRequest({ endpoint, blocks: ctx(), instruction: "go" }).system?.[0].text,
   );
   assert.equal(new Set(systems).size, 1, "one shared system prompt only");
   assert.equal(systems[0], SHARED_SYSTEM);
@@ -319,6 +327,145 @@ test("no endpoint asks for more output than its model can produce", () => {
       `${endpoint} max_tokens not clamped`,
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// The test run — a different shape on purpose
+// ---------------------------------------------------------------------------
+
+const testRunBlocks = (attachments: ContextAttachment[] = []) =>
+  buildTestRunBlocks({
+    attachments,
+    compiledPrompt: "COMPILED_PROMPT_MARKER",
+  });
+
+test("the test run carries no system prompt, or it would be told not to do the task", () => {
+  const req = shapeTestRun(testRunBlocks());
+  assert.equal(
+    req.system,
+    undefined,
+    "SHARED_SYSTEM says to judge the brief rather than carry it out — fatal here",
+  );
+});
+
+test("the test run never sees the brief, or it grades the brief and not the prompt", () => {
+  const text = testRunBlocks([attachment()])
+    .filter((b) => b.type === "text")
+    .map((b) => (b.type === "text" ? b.text : ""))
+    .join("\n");
+
+  for (const leak of [
+    "Who's asking",
+    "Requirements",
+    "AED 4,200,000",
+    "Property Consultant",
+    "brochure for this villa",
+  ]) {
+    assert.equal(
+      text.includes(leak),
+      false,
+      `brief content leaked into the test run: ${leak}`,
+    );
+  }
+  assert.ok(text.includes("COMPILED_PROMPT_MARKER"), "the prompt itself must be sent");
+});
+
+test("the compiled prompt is the last block, after the files it refers to", () => {
+  const blocks = testRunBlocks([attachment()]);
+  const last = blocks[blocks.length - 1];
+  assert.ok(last.type === "text" && last.text === "COMPILED_PROMPT_MARKER");
+});
+
+test("excluded files ARE attached to the test run, so the exclusion is actually tested", () => {
+  const blocks = testRunBlocks([
+    attachment(),
+    attachment({
+      filename: "tokens-LEGACY.csv",
+      role: "excluded",
+      anthropic_file_id: null,
+      extracted_text: "SUPERSEDED_VALUE",
+      extraction_status: "ok",
+    }),
+  ]);
+  const text = blocks
+    .filter((b) => b.type === "text")
+    .map((b) => (b.type === "text" ? b.text : ""))
+    .join("\n");
+
+  assert.ok(
+    text.includes("tokens-LEGACY.csv"),
+    "withholding it would make 'did not use the excluded file' pass for free",
+  );
+  assert.ok(text.includes("SUPERSEDED_VALUE"));
+  assert.equal(
+    text.includes("DO NOT USE"),
+    false,
+    "role labels are the reviewer's framing, not something a real paste would carry",
+  );
+});
+
+test("the test run keeps the defensive parts: fallback, files beta, clamped budget", () => {
+  const withFiles = shapeTestRun(testRunBlocks([attachment()]));
+  assert.equal(withFiles.fallbacks, "default");
+  assert.ok(withFiles.betas.includes("server-side-fallback-2026-07-01"));
+  assert.ok(withFiles.betas.includes("files-api-2025-04-14"));
+  assert.ok(
+    withFiles.max_tokens <= MODEL_CAPS[withFiles.model].maxOutputTokens,
+    "max_tokens not clamped",
+  );
+
+  const withoutFiles = shapeTestRun(testRunBlocks());
+  assert.equal(withoutFiles.betas.includes("files-api-2025-04-14"), false);
+});
+
+test("grade payload numbers items from zero, matching the schema's index field", () => {
+  const payload = gradePayload({
+    items: [
+      { text: "Heading is 32px", category: "format" },
+      { text: "Price appears verbatim", category: "content" },
+    ],
+    output: "the output",
+  });
+  assert.ok(payload.includes("0. [format] Heading is 32px"));
+  assert.ok(payload.includes("1. [content] Price appears verbatim"));
+  assert.ok(payload.includes("<output>"), "output must be delimited");
+});
+
+// ---------------------------------------------------------------------------
+// pricing.ts
+// ---------------------------------------------------------------------------
+
+test("an unknown model still prices, because a refusal fallback returns one", () => {
+  const usage = { input_tokens: 1000, output_tokens: 1000 };
+
+  // This is the documented fallback for a cyber-category refusal on Opus 5, and
+  // it is not in the rate table. Indexing the table directly threw here.
+  const fallback = costBreakdown("claude-opus-4-8", usage);
+  assert.ok(fallback.totalCost > 0, "must not be free");
+  assert.equal(Number.isFinite(fallback.totalCost), true, "must not be NaN");
+
+  // Erring high: never cheaper than the most expensive model we do know.
+  const opus = costBreakdown("claude-opus-5", usage);
+  assert.ok(
+    fallback.totalCost >= opus.totalCost,
+    "an unknown model must not under-report spend",
+  );
+  assert.equal(isPricedModel("claude-opus-4-8"), false);
+  assert.equal(isPricedModel("claude-opus-5"), true);
+});
+
+test("input_tokens is the uncached remainder, so the total is the sum of three", () => {
+  const breakdown = costBreakdown("claude-opus-5", {
+    input_tokens: 100,
+    cache_creation_input_tokens: 900,
+    cache_read_input_tokens: 4000,
+    output_tokens: 50,
+  });
+  assert.equal(breakdown.totalPromptTokens, 5000);
+  assert.ok(
+    breakdown.cacheSavings > 0,
+    "reading 4k tokens from cache must show a saving",
+  );
 });
 
 test("a json schema lands in output_config.format alongside effort", () => {

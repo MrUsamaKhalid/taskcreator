@@ -87,3 +87,33 @@ export const GRADE_INSTRUCTION = `Judge the output against the checklist. Return
 - evidence quotes or cites the part of the output that decides it. For a fail, say specifically what is missing or wrong — enough that the person knows which part of their brief to strengthen.
 
 Judge only what the item asks. Do not deduct for things outside the checklist, however much you would have done differently.`;
+
+/**
+ * The material the grader judges, appended after GRADE_INSTRUCTION.
+ *
+ * Kept out of the cached prefix on purpose: the output and the checklist change
+ * on every run, so putting them above a breakpoint would invalidate the brief
+ * prefix each time and turn every grade into a full cache write.
+ */
+export function gradePayload({
+  items,
+  output,
+}: {
+  items: Array<{ text: string; category: string }>;
+  output: string;
+}): string {
+  return [
+    "",
+    "## The checklist",
+    "",
+    ...items.map(
+      (item, index) => `${index}. [${item.category}] ${item.text}`,
+    ),
+    "",
+    "## The output to judge",
+    "",
+    "<output>",
+    output,
+    "</output>",
+  ].join("\n");
+}

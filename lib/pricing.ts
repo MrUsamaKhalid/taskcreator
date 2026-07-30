@@ -11,8 +11,10 @@ import type { ModelId } from "@/lib/config";
  * showing none, so the UI links out to the console for that instead.
  */
 
+type Rate = { input: number; output: number };
+
 /** USD per million tokens. */
-const RATES: Record<ModelId, { input: number; output: number }> = {
+const RATES: Record<ModelId, Rate> = {
   "claude-opus-5": { input: 5, output: 25 },
   // Sonnet 5 has introductory pricing of $2/$10 per MTok through 2026-08-31.
   // Standard rates are used here on purpose: a cost display should err high, so
@@ -21,6 +23,32 @@ const RATES: Record<ModelId, { input: number; output: number }> = {
   "claude-sonnet-5": { input: 3, output: 15 },
   "claude-haiku-4-5": { input: 1, output: 5 },
 };
+
+/**
+ * The rate card for a model id that may not be one of ours.
+ *
+ * Responses are priced against the model that actually served them, and
+ * `fallbacks: "default"` means that can be a model this table has never heard of
+ * — a refusal on Opus 5 is re-run on Opus 4.8. Indexing RATES directly would
+ * throw on `undefined.input` at exactly the moment the app is already handling
+ * an unusual response.
+ *
+ * Unknown ids are priced at the most expensive card rather than skipped.
+ * Skipping would under-report real spend, which is the worse way to be wrong
+ * about money.
+ */
+function rateFor(model: string): Rate {
+  const known = RATES[model as ModelId];
+  if (known) return known;
+  return Object.values(RATES).reduce((highest, rate) =>
+    rate.output > highest.output ? rate : highest,
+  );
+}
+
+/** Whether this id is one the rate table prices exactly. */
+export function isPricedModel(model: string): model is ModelId {
+  return model in RATES;
+}
 
 /**
  * Cache multipliers, relative to the model's base input rate.
@@ -41,7 +69,7 @@ export type TokenUsage = {
 };
 
 export type CostBreakdown = {
-  model: ModelId;
+  model: string;
   inputTokens: number;
   outputTokens: number;
   cacheWriteTokens: number;
@@ -70,10 +98,10 @@ function num(value: number | null | undefined): number {
  * run was mysteriously cheap.
  */
 export function costBreakdown(
-  model: ModelId,
+  model: string,
   usage: TokenUsage | null | undefined,
 ): CostBreakdown {
-  const rate = RATES[model];
+  const rate = rateFor(model);
   const inputTokens = num(usage?.input_tokens);
   const outputTokens = num(usage?.output_tokens);
   const cacheWriteTokens = num(usage?.cache_creation_input_tokens);
@@ -103,7 +131,7 @@ export function costBreakdown(
 
 /** Just the number, for summing. */
 export function costOf(
-  model: ModelId,
+  model: string,
   usage: TokenUsage | null | undefined,
 ): number {
   return costBreakdown(model, usage).totalCost;
@@ -121,11 +149,11 @@ export function costOf(
  * exercised in isolation. Callers pass `ENDPOINT_MODEL[endpoint]`.
  */
 export function estimateCost(
-  model: ModelId,
+  model: string,
   promptTokens: number,
   expectedOutputTokens: number,
 ): number {
-  const rate = RATES[model];
+  const rate = rateFor(model);
   return (
     (promptTokens * rate.input) / 1_000_000 +
     (expectedOutputTokens * rate.output) / 1_000_000
@@ -154,7 +182,7 @@ export function formatTokens(tokens: number): string {
 
 /** Sum many calls, e.g. every call against one prompt or one month. */
 export function totalCost(
-  calls: Array<{ model: ModelId; usage: TokenUsage | null | undefined }>,
+  calls: Array<{ model: string; usage: TokenUsage | null | undefined }>,
 ): number {
   return calls.reduce((sum, call) => sum + costOf(call.model, call.usage), 0);
 }

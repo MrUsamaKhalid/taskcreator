@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import { Step } from "@/components/step";
 import {
@@ -13,6 +13,9 @@ import {
   evaluateFieldChips,
   referencedFilenames,
 } from "@/lib/brief";
+import type { Review } from "@/lib/claude/schemas";
+import type { Database } from "@/lib/database.types";
+import type { CallCost } from "@/lib/model-call";
 import { SaveIndicatorText, useAutosave } from "@/lib/use-autosave";
 
 import {
@@ -23,6 +26,13 @@ import {
 } from "../actions";
 import { Attachments, type AttachmentRow } from "./attachments";
 import { AttachmentChipRow, BriefEditor } from "./brief-editor";
+import { ChecklistStep, type ChecklistRow } from "./checklist-step";
+import { CompileStep } from "./compile-step";
+import { ReviewStep } from "./review-step";
+import { SpendMeter } from "./spend-meter";
+import { TestRunStep } from "./test-run-step";
+
+type CompileMode = Database["public"]["Enums"]["compile_mode"];
 
 const SECTOR_SUGGESTIONS = [
   "Real Estate",
@@ -44,6 +54,12 @@ export type WorkspaceProps = {
   initialDraftPrompt: string;
   initialDismissedChips: string[];
   initialAttachments: AttachmentRow[];
+  initialReview: Review | null;
+  initialReviewedAt: string | null;
+  initialChecklist: ChecklistRow[];
+  initialCompiledPrompt: string;
+  initialCompileMode: CompileMode;
+  persistedSpendUsd: number;
 };
 
 export function Workspace({
@@ -56,6 +72,12 @@ export function Workspace({
   initialDraftPrompt,
   initialDismissedChips,
   initialAttachments,
+  initialReview,
+  initialReviewedAt,
+  initialChecklist,
+  initialCompiledPrompt,
+  initialCompileMode,
+  persistedSpendUsd,
 }: WorkspaceProps) {
   const [title, setTitle] = useState(initialTitle);
   const [sector, setSector] = useState(initialSector);
@@ -67,6 +89,13 @@ export function Workspace({
   // react the instant a file lands — the brand-reference and files-attached
   // chips both read this list.
   const [attachments, setAttachments] = useState<AttachmentRow[]>(initialAttachments);
+  const [checklist, setChecklist] = useState<ChecklistRow[]>(initialChecklist);
+  const [compiledPrompt, setCompiledPrompt] = useState(initialCompiledPrompt);
+  const [compileMode, setCompileMode] = useState<CompileMode>(initialCompileMode);
+  // Every model call appends here. Not persisted: compile and checklist calls
+  // have no row of their own to hang usage on, so this is the only place the
+  // full session cost exists.
+  const [calls, setCalls] = useState<CallCost[]>([]);
 
   const briefSave = useAutosave(brief, (value) => saveBrief(versionId, value));
   const draftSave = useAutosave(draftPrompt, (value) =>
@@ -91,6 +120,15 @@ export function Workspace({
 
   const saveLabel =
     SaveIndicatorText(briefSave) || SaveIndicatorText(draftSave) || "";
+
+  const recordSpend = useCallback((cost: CallCost) => {
+    setCalls((current) => [...current, cost]);
+  }, []);
+
+  // The gate on every model-backed step. Deliberately just "no box is empty" —
+  // the coverage chips are advisory and never block, so making them a
+  // precondition here would contradict that.
+  const briefReady = briefIsComplete(brief);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -233,6 +271,65 @@ export function Workspace({
               a recent AI conversation and mirror that voice and level of detail.
             </p>
           </Step>
+
+          <Step
+            number={4}
+            title="Review"
+            description="Where this would go wrong, with the concrete fix quoted rather than described."
+          >
+            <ReviewStep
+              versionId={versionId}
+              ready={briefReady}
+              initialReview={initialReview}
+              initialReviewedAt={initialReviewedAt}
+              onSpend={recordSpend}
+            />
+          </Step>
+
+          <Step
+            number={5}
+            title="Acceptance criteria"
+            description="What a correct result has to satisfy. Each one answerable yes or no by looking at the output — that's what makes scoring possible."
+          >
+            <ChecklistStep
+              versionId={versionId}
+              ready={briefReady}
+              items={checklist}
+              onItemsChange={setChecklist}
+              onSpend={recordSpend}
+            />
+          </Step>
+
+          <Step
+            number={6}
+            title="Compile"
+            description="The deliverable — the prompt you paste into an AI."
+          >
+            <CompileStep
+              versionId={versionId}
+              ready={briefReady}
+              compiledPrompt={compiledPrompt}
+              compileMode={compileMode}
+              onCompiled={(text, mode) => {
+                setCompiledPrompt(text);
+                setCompileMode(mode);
+              }}
+              onSpend={recordSpend}
+            />
+          </Step>
+
+          <Step
+            number={7}
+            title="Test run"
+            description="Runs the finished prompt with your files but without the brief, then scores what comes back against your criteria."
+          >
+            <TestRunStep
+              versionId={versionId}
+              hasCompiledPrompt={compiledPrompt.trim().length > 0}
+              checklistCount={checklist.length}
+              onSpend={recordSpend}
+            />
+          </Step>
         </section>
 
         {/* Right: coverage */}
@@ -242,7 +339,11 @@ export function Workspace({
             attachments={attachments}
             dismissedChips={dismissedChips}
             draftPrompt={draftPrompt}
+            compiled={compiledPrompt.trim().length > 0}
           />
+          <div className="px-5 pb-5">
+            <SpendMeter persistedUsd={persistedSpendUsd} calls={calls} />
+          </div>
         </aside>
       </div>
     </div>
@@ -254,11 +355,13 @@ function CoveragePane({
   attachments,
   dismissedChips,
   draftPrompt,
+  compiled,
 }: {
   brief: Brief;
   attachments: ChipAttachment[];
   dismissedChips: string[];
   draftPrompt: string;
+  compiled: boolean;
 }) {
   const ctx = { brief, attachments };
   const completion = briefCompletion(ctx, dismissedChips);
@@ -344,10 +447,12 @@ function CoveragePane({
         <p className="text-sm font-semibold text-navy">Next</p>
         <p className="mt-1 text-sm text-muted">
           {!complete
-            ? "Fill every brief box, then the AI review unlocks."
+            ? "Fill every brief box, then the AI steps unlock."
             : draftPrompt.trim().length === 0
               ? "Brief is complete. Draft your prompt in step 3."
-              : "Brief and draft are in place — AI review, checklist, and test run land in the next build step."}
+              : compiled
+                ? "You have a finished prompt. Run it in step 7 to see whether it holds up."
+                : "Everything is in place. Review it in step 4, or go straight to compiling in step 6."}
         </p>
       </div>
     </div>

@@ -115,17 +115,38 @@ export const MODEL_CAPS: Record<
 };
 
 /**
- * max_tokens per endpoint. Anything above roughly 16k must stream or the SDK
- * risks an HTTP timeout, so compile and testRun are the streaming pair.
+ * max_tokens per endpoint.
+ *
+ * These are ceilings on *thinking plus answer*, not on the answer alone. That
+ * matters more than it used to: on Opus 5 thinking is on by default and runs at
+ * `high` effort here, so a budget sized around the visible output alone gets
+ * spent on reasoning and the answer truncates mid-JSON — which then surfaces as
+ * a schema-validation failure rather than an obvious cutoff. Every value below
+ * is deliberately several times the expected answer size.
+ *
+ * The usual reason not to do this is the SDK's HTTP timeout on large
+ * non-streaming requests. That constraint does not apply here because every call
+ * goes out over `messages.stream()` — see lib/claude/call.ts — so the headroom is
+ * free.
  */
 export const ENDPOINT_MAX_TOKENS: Record<Endpoint, number> = {
-  review: 16_000,
-  checklist: 16_000,
-  compile: 8_000,
+  review: 32_000,
+  checklist: 32_000,
+  compile: 32_000,
   testRun: 32_000,
+  // Haiku 4.5 does no thinking, so this is 16k of pure output — ample for a
+  // verdict per checklist item, and well under the model's 64k cap.
   grade: 16_000,
 };
 
+/**
+ * Whether the endpoint's output is streamed *to the browser*.
+ *
+ * Distinct from how the call is made: every endpoint streams from the API. This
+ * flag is only about whether there is partial output worth showing a person.
+ * Compile and testRun produce prose you can watch being written; the other three
+ * produce JSON, which is meaningless until it is complete.
+ */
 export const ENDPOINT_STREAMS: Record<Endpoint, boolean> = {
   review: false,
   checklist: false,
