@@ -21,6 +21,7 @@ import {
   saveDraftPrompt,
   savePromptMeta,
 } from "../actions";
+import { Attachments, type AttachmentRow } from "./attachments";
 import { AttachmentChipRow, BriefEditor } from "./brief-editor";
 
 const SECTOR_SUGGESTIONS = [
@@ -42,7 +43,7 @@ export type WorkspaceProps = {
   initialBrief: Brief;
   initialDraftPrompt: string;
   initialDismissedChips: string[];
-  attachments: ChipAttachment[];
+  initialAttachments: AttachmentRow[];
 };
 
 export function Workspace({
@@ -54,7 +55,7 @@ export function Workspace({
   initialBrief,
   initialDraftPrompt,
   initialDismissedChips,
-  attachments,
+  initialAttachments,
 }: WorkspaceProps) {
   const [title, setTitle] = useState(initialTitle);
   const [sector, setSector] = useState(initialSector);
@@ -62,6 +63,10 @@ export function Workspace({
   const [brief, setBrief] = useState<Brief>(initialBrief);
   const [draftPrompt, setDraftPrompt] = useState(initialDraftPrompt);
   const [dismissedChips, setDismissedChips] = useState(initialDismissedChips);
+  // Attachments live here rather than inside the uploader so the coverage chips
+  // react the instant a file lands — the brand-reference and files-attached
+  // chips both read this list.
+  const [attachments, setAttachments] = useState<AttachmentRow[]>(initialAttachments);
 
   const briefSave = useAutosave(brief, (value) => saveBrief(versionId, value));
   const draftSave = useAutosave(draftPrompt, (value) =>
@@ -195,13 +200,13 @@ export function Workspace({
               onToggleChip={toggleChip}
             />
 
-            <div className="mt-6 rounded-md border border-dashed border-line bg-panel px-4 py-4">
-              <p className="text-sm font-semibold text-navy">Files</p>
-              <p className="mt-1 text-sm text-muted">
-                Attachments land here in the next build step. For now, name the
-                files you&apos;ll use in the brief above — the coverage chip below
-                tracks whether everything you named is accounted for.
-              </p>
+            <div className="mt-6 border-t border-line-soft pt-5">
+              <Attachments
+                promptId={promptId}
+                versionId={versionId}
+                attachments={attachments}
+                onChange={setAttachments}
+              />
               <AttachmentChipRow
                 brief={brief}
                 attachments={attachments}

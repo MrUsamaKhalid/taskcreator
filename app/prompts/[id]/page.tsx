@@ -55,7 +55,7 @@ export default async function PromptPage({
 
   const { data: attachments } = await supabase
     .from("attachments")
-    .select("filename, role")
+    .select("id, filename, mime, size_bytes, role, extraction_status")
     .eq("prompt_version_id", version.id)
     .order("created_at", { ascending: true });
 
@@ -69,7 +69,7 @@ export default async function PromptPage({
       initialBrief={toBrief(version.brief)}
       initialDraftPrompt={version.draft_prompt}
       initialDismissedChips={version.dismissed_chips ?? []}
-      attachments={attachments ?? []}
+      initialAttachments={attachments ?? []}
     />
   );
 }
