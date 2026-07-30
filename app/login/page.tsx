@@ -23,10 +23,15 @@ export default async function LoginPage({
         {error ? (
           <p className="mt-4 rounded-md border border-bad/30 bg-bad-bg px-3 py-2 text-sm text-bad">
             {error === "missing_token"
-              ? "That sign-in link was incomplete. Request a new one."
+              ? "That sign-in link was incomplete. Sign in with your password instead."
               : error}
           </p>
         ) : null}
+
+        <p className="mt-6 text-xs text-faint">
+          Accounts are created in the Supabase dashboard, not here. There is no
+          sign-up form on purpose.
+        </p>
       </div>
     </main>
   );
