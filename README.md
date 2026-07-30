@@ -21,6 +21,7 @@ This targets **100%**, and the deliverable is the prompt itself.
 | Styling | Tailwind CSS v4 |
 | Data / auth / files | Supabase (Postgres + RLS, Auth, Storage) |
 | Model | Anthropic Claude (`claude-opus-5`) |
+| Hosting | Vercel (`fra1`, co-located with Supabase) |
 
 ## Getting started
 
@@ -32,14 +33,21 @@ pnpm dev
 
 Open http://localhost:3000. Sign-in is a magic link — no password.
 
+Deploying? See [DEPLOYMENT.md](./DEPLOYMENT.md). The step people skip is the
+Supabase redirect allowlist, without which magic-link sign-in fails in
+production.
+
 ### Environment
 
 | Variable | Notes |
 | --- | --- |
 | `NEXT_PUBLIC_SUPABASE_URL` | Safe to expose. |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Safe to expose. RLS is what protects the data. |
-| `ANTHROPIC_API_KEY` | **Server only.** Never prefix with `NEXT_PUBLIC_`. |
-| `NEXT_PUBLIC_SITE_URL` | Used to build magic-link redirects. |
+| `ANTHROPIC_API_KEY` | **Server only.** Never prefix with `NEXT_PUBLIC_`. Optional until the model features land. |
+
+There is no site-URL variable: magic links redirect to
+`window.location.origin`, so preview deployments sign you into the preview
+rather than production, with nothing per-deployment to keep in sync.
 
 ## Architecture notes
 
@@ -69,10 +77,16 @@ read a single cache entry rather than writing four.
 ## Scripts
 
 ```bash
-pnpm dev     # dev server
-pnpm build   # production build
-pnpm lint    # eslint (next lint was removed in Next.js 16)
+pnpm dev        # dev server
+pnpm build      # production build
+pnpm lint       # eslint (next lint was removed in Next.js 16)
+pnpm typecheck  # tsc --noEmit
 ```
+
+CI runs `typecheck`, `lint`, and `build` on every pull request. It needs **no
+secrets**: every page that touches Supabase or Anthropic is server-rendered on
+demand, so nothing calls out during a build — which is asserted by the build
+passing with no environment configured at all.
 
 ## Status
 

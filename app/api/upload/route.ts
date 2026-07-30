@@ -10,6 +10,13 @@ type AttachmentRole = Database["public"]["Enums"]["attachment_role"];
 
 const VALID_ROLES: AttachmentRole[] = ["input", "brand", "excluded"];
 
+/**
+ * A 20 MB file has to be read, written to Supabase Storage, text-extracted, and
+ * pushed to the Anthropic Files API — comfortably past Vercel's 10s default.
+ * 60s is the ceiling on the Hobby plan; Pro allows up to 300.
+ */
+export const maxDuration = 60;
+
 /** Strip anything that could escape the {user}/{prompt}/ prefix. */
 function safeName(filename: string): string {
   return (
