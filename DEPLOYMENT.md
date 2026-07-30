@@ -36,10 +36,41 @@ The app builds and deploys fine with `ANTHROPIC_API_KEY` unset. Uploads, the
 brief, coverage chips, and autosave all work; only the model-backed features
 (review, checklist, compile, test run) need it.
 
-## 3. Supabase redirect allowlist
+## 3. Create your user, and close the door behind you
 
-**This is the step that breaks magic-link sign-in if you skip it.** Supabase
-refuses to send users to an origin it doesn't recognise.
+Sign-in is email + password. There is **no sign-up form in the app**, on purpose:
+this deployment is publicly reachable and holds a server-side Anthropic key, so a
+self-serve signup would let a stranger create an account and spend your credit.
+
+Supabase dashboard → **Authentication → Users**:
+
+1. **Add user** → **Create new user**
+2. Enter your email and a password
+3. Tick **Auto Confirm User** (otherwise it waits on a confirmation email)
+4. **Create user**
+
+Then close off signups — Supabase dashboard → **Authentication → Sign In / Providers → Email**:
+
+5. Turn **off** "Allow new users to sign up"
+6. **Save**
+
+Without step 5 the app's missing signup form is cosmetic: anyone could still
+register straight against your Supabase project's auth endpoint.
+
+There is no in-app password reset, because a reset needs email and email is rate
+limited (see below). Keep the password in your password manager; change it from
+the dashboard if you lose it.
+
+## 4. Supabase redirect allowlist
+
+Only needed for the "email me a sign-in link instead" fallback. Skip it and
+password sign-in still works — the link fallback just fails.
+
+Supabase's built-in email service sends roughly **two auth emails per hour, per
+project**, and the limit counts per project rather than per recipient, so trying
+a different address does not reset it. It is a testing convenience, not a
+delivery service. If you ever want magic links to be usable day to day, put real
+SMTP behind it (Resend, Postmark, SES) under **Project Settings → Auth → SMTP**.
 
 Supabase dashboard → **Authentication → URL Configuration**:
 
@@ -57,7 +88,7 @@ that preview rather than bouncing you to production — but only if its origin
 matches an allowlist entry. Copy the exact preview hostname pattern from any
 Vercel preview URL.
 
-## 4. Region
+## 5. Region
 
 `vercel.json` pins functions to `fra1` (Frankfurt) because the Supabase project
 is in `eu-central-1` (also Frankfurt). This matters more than it looks:
@@ -65,7 +96,7 @@ is in `eu-central-1` (also Frankfurt). This matters more than it looks:
 cross-continent hop there would tax every page load. If you ever move the
 Supabase project, move this too.
 
-## 5. Function timeouts
+## 6. Function timeouts
 
 The upload route declares `maxDuration = 60`, which is the Hobby plan ceiling.
 
@@ -79,14 +110,15 @@ Options, in order of preference:
 2. Vercel Pro, which allows up to 300s.
 3. Lower `effort` on the long-running calls.
 
-## 6. First deploy checklist
+## 7. First deploy checklist
 
 - [ ] Repository imported, build green
 - [ ] Three environment variables set for all three environments
 - [ ] `ANTHROPIC_API_KEY` **not** prefixed `NEXT_PUBLIC_`
-- [ ] Supabase Site URL set to the production domain
-- [ ] Supabase redirect allowlist covers localhost, production, and the preview wildcard
-- [ ] Magic-link sign-in tested on the deployed URL, not just locally
+- [ ] Your user created in Supabase, with **Auto Confirm** ticked
+- [ ] **"Allow new users to sign up" turned off** — the one that stops a stranger spending your API credit
+- [ ] Password sign-in tested on the deployed URL, not just locally
+- [ ] Optional: Supabase Site URL and redirect allowlist, if you want the email-link fallback to work
 
 ## Model provider
 
