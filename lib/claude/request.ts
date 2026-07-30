@@ -35,6 +35,16 @@ How to think about the material you are given:
 Be concrete and specific. When you criticise something, quote the text you would use instead. Never pad with restatement of the brief back at the person who wrote it.`;
 
 /**
+ * The `output_config.format` object as the API expects it.
+ *
+ * Passed through whole rather than rebuilt from a bare schema: it is produced by
+ * the SDK's `zodOutputFormat` helper, which strips the JSON Schema keywords
+ * structured outputs does not support. Reassembling it here would risk
+ * reintroducing them.
+ */
+export type OutputFormat = { type: "json_schema"; schema: Record<string, unknown> };
+
+/**
  * A request as this app builds it, before handing to the SDK.
  *
  * Typed structurally rather than against the SDK's parameter union so the shaping
@@ -50,7 +60,7 @@ export type ShapedRequest = {
   messages: Array<{ role: "user"; content: ContentBlock[] }>;
   output_config?: {
     effort?: string;
-    format?: { type: "json_schema"; schema: Record<string, unknown> };
+    format?: OutputFormat;
   };
   thinking?: { type: "adaptive" };
   stream?: boolean;
@@ -81,12 +91,12 @@ export function shapeRequest({
   endpoint,
   blocks,
   instruction,
-  jsonSchema,
+  format,
 }: {
   endpoint: Endpoint;
   blocks: ContentBlock[];
   instruction: string;
-  jsonSchema?: Record<string, unknown>;
+  format?: OutputFormat;
 }): ShapedRequest {
   const model = ENDPOINT_MODEL[endpoint];
   const caps = MODEL_CAPS[model];
@@ -113,7 +123,7 @@ export function shapeRequest({
 
   const outputConfig: NonNullable<ShapedRequest["output_config"]> = {};
   if (caps.supportsEffort && effort) outputConfig.effort = effort;
-  if (jsonSchema) outputConfig.format = { type: "json_schema", schema: jsonSchema };
+  if (format) outputConfig.format = format;
   if (Object.keys(outputConfig).length > 0) request.output_config = outputConfig;
 
   if (caps.supportsAdaptiveThinking) request.thinking = { type: "adaptive" };
