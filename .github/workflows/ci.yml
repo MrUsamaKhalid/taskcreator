@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   check:
-    name: typecheck · lint · build
+    name: typecheck · lint · test · build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +33,12 @@ jobs:
       - run: pnpm typecheck
 
       - run: pnpm lint
+
+      # Unit tests for the lib layer. These matter more than usual here: they
+      # cover the request-shaping rules whose failure mode is a 400 from the
+      # Anthropic API, and they run without an API key, so a misconfiguration is
+      # caught in CI rather than at first live call.
+      - run: pnpm test
 
       # No secrets needed: every page that touches Supabase or Anthropic is
       # server-rendered on demand, so nothing calls out during the build. That is
