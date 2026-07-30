@@ -131,8 +131,20 @@ application's traffic through them.
 
 Cost is managed by tiering models per endpoint — see `ENDPOINT_MODEL` and
 `ENDPOINT_EFFORT` in `lib/config.ts`. Review and compile run on Opus 5, the
-checklist on Sonnet 5, grading on Haiku 4.5. That lands around $0.15–0.25 per
-full cycle rather than roughly $0.50 on Opus throughout.
+checklist on Sonnet 5, grading on Haiku 4.5.
+
+Modelled on a substantial brief (≈8k prompt, two attachments, 8k of test-run
+output), one full cycle costs about **$0.44** tiered, against **$0.57** all-Opus.
+A lean text-only brief lands well under $0.10. Tiering is worth having but it is
+not the main lever, and an earlier estimate of $0.15–0.25 was too optimistic.
+
+**The test run dominates.** Output tokens cost 5× input, so a single long
+generation outweighs the other four calls combined — in the model above it is
+$0.21 of the $0.44. Tiering barely touches it, because `testRun` deliberately
+runs on whichever model you intend to use the finished prompt with; that is a
+correctness choice, not a cost one. If you want cost down, the levers in order of
+effect are: shorten the expected output, run the test on a cheaper model, then
+tier the rest.
 
 `MODEL_CAPS` in the same file records why the tiering isn't just a string swap:
 Haiku 4.5 rejects `output_config.effort` outright, doesn't take adaptive
