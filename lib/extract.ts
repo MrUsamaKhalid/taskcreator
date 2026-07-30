@@ -57,10 +57,11 @@ const TEXT_EXTENSIONS = new Set([
 
 const DOCX_MIME =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-const XLSX_MIMES = new Set([
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "application/vnd.ms-excel",
-]);
+
+/** Only the modern OOXML spreadsheet format. Legacy .xls (BIFF) is not
+ *  supported by exceljs, so those fall through to name-only. */
+const XLSX_MIME =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 /**
  * Cap on extracted text per file. Large spreadsheets can run to millions of
@@ -69,6 +70,67 @@ const XLSX_MIMES = new Set([
  * text is partial rather than silently assuming it saw everything.
  */
 const MAX_EXTRACTED_CHARS = 200_000;
+
+/**
+ * Flatten one spreadsheet cell to a plain string.
+ *
+ * exceljs hands back rich objects, not primitives: formulas arrive as
+ * `{ formula, result }`, hyperlinks as `{ text, hyperlink }`, styled text as
+ * `{ richText: [...] }`. Naive String() on any of those yields "[object Object]",
+ * which would quietly feed the model garbage instead of its data.
+ */
+function cellToString(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "object") {
+    const cell = value as Record<string, unknown>;
+    if (Array.isArray(cell.richText)) {
+      return cell.richText
+        .map((part) => String((part as { text?: unknown }).text ?? ""))
+        .join("");
+    }
+    // A formula cell: prefer the computed value over the expression.
+    if ("result" in cell) return cellToString(cell.result);
+    if ("text" in cell) return String(cell.text ?? "");
+    if ("error" in cell) return String(cell.error ?? "");
+    return "";
+  }
+  return String(value);
+}
+
+/** Quote a CSV field only when it needs it. */
+function csvEscape(value: string): string {
+  return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+/**
+ * Convert every sheet of a workbook to labelled CSV.
+ *
+ * Sheet names are kept as headers because they carry meaning the rows don't —
+ * a brief that says "use the Units tab, ignore Old" is only actionable if the
+ * model can tell the tabs apart.
+ */
+async function xlsxToCsv(bytes: ArrayBuffer): Promise<string> {
+  const mod = await import("exceljs");
+  // exceljs is CommonJS; under Node ESM the class hangs off the default export.
+  const ExcelJS = (mod as unknown as { default?: typeof mod }).default ?? mod;
+
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(bytes);
+
+  const sheets: string[] = [];
+  workbook.eachSheet((sheet) => {
+    const lines: string[] = [];
+    sheet.eachRow({ includeEmpty: false }, (row) => {
+      // row.values is 1-indexed with a hole at 0.
+      const values = Array.isArray(row.values) ? row.values.slice(1) : [];
+      lines.push(values.map((v) => csvEscape(cellToString(v))).join(","));
+    });
+    sheets.push(`--- sheet: ${sheet.name} ---\n${lines.join("\n")}`);
+  });
+
+  return sheets.join("\n\n");
+}
 
 function extensionOf(filename: string): string {
   const parts = filename.toLowerCase().split(".");
@@ -127,15 +189,13 @@ export async function extractFile(
     }
   }
 
-  if (XLSX_MIMES.has(mime) || ext === "xlsx" || ext === "xls") {
+  if (mime === XLSX_MIME || ext === "xlsx") {
     try {
-      const XLSX = await import("xlsx");
-      const workbook = XLSX.read(Buffer.from(bytes), { type: "buffer" });
-      const sheets = workbook.SheetNames.map((name) => {
-        const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[name]);
-        return `--- sheet: ${name} ---\n${csv}`;
-      });
-      return { status: "ok", text: truncate(sheets.join("\n\n")), delivery: "text" };
+      return {
+        status: "ok",
+        text: truncate(await xlsxToCsv(bytes)),
+        delivery: "text",
+      };
     } catch {
       return { status: "failed", text: null, delivery: "name_only" };
     }

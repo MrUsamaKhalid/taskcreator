@@ -17,8 +17,12 @@ export function LoginForm({ next }: { next?: string }) {
     setPending(true);
     const supabase = createClient();
 
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? window.location.origin;
-    const redirectTo = new URL("/auth/confirm", siteUrl);
+    // Always send the link back to the origin the user is actually on. That way
+    // a Vercel preview deployment signs you into that preview rather than
+    // bouncing you to production, and there is no per-deployment env var to keep
+    // in sync — the only requirement is that Supabase's redirect allowlist
+    // covers the origin (see DEPLOYMENT.md).
+    const redirectTo = new URL("/auth/confirm", window.location.origin);
     if (next) redirectTo.searchParams.set("next", next);
 
     const { error } = await supabase.auth.signInWithOtp({
