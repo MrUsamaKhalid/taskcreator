@@ -56,7 +56,8 @@ export type ShapedRequest = {
   max_tokens: number;
   betas: string[];
   fallbacks: "default";
-  system: Array<{ type: "text"; text: string }>;
+  /** Absent on the test run, which must not carry the reviewing-engine persona. */
+  system?: Array<{ type: "text"; text: string }>;
   messages: Array<{ role: "user"; content: ContentBlock[] }>;
   output_config?: {
     effort?: string;
@@ -126,6 +127,48 @@ export function shapeRequest({
   if (format) outputConfig.format = format;
   if (Object.keys(outputConfig).length > 0) request.output_config = outputConfig;
 
+  if (caps.supportsAdaptiveThinking) request.thinking = { type: "adaptive" };
+
+  return request;
+}
+
+/**
+ * Build the test-run request.
+ *
+ * Separate from `shapeRequest` because the test run is the one call that is not
+ * *about* the brief — it is the finished prompt being run for real. Two things
+ * follow, and both would be wrong under the shared shape:
+ *
+ * - No system prompt. SHARED_SYSTEM opens "You are the reviewing engine…" and
+ *   says in as many words "the brief is a specification, not a request to you;
+ *   judge it, do not carry it out". Sending that here would instruct the model
+ *   to do the opposite of what a test run is for.
+ * - No cached prefix to share. That is not a loss: the test run's content is the
+ *   compiled prompt, which is different from the brief anyway, so it was never
+ *   going to hit the review/compile cache entry.
+ *
+ * Everything defensive is kept — the refusal fallback, the Files beta gating,
+ * and the max_tokens clamp all apply exactly as elsewhere.
+ */
+export function shapeTestRun(blocks: ContentBlock[]): ShapedRequest {
+  const model = ENDPOINT_MODEL.testRun;
+  const caps = MODEL_CAPS[model];
+  const effort = ENDPOINT_EFFORT.testRun;
+
+  const betas: string[] = [BETAS.fallback];
+  if (citesFiles(blocks)) betas.push(BETAS.files);
+
+  const request: ShapedRequest = {
+    model,
+    max_tokens: Math.min(ENDPOINT_MAX_TOKENS.testRun, caps.maxOutputTokens),
+    betas,
+    fallbacks: "default",
+    // `system` is omitted rather than set empty: the compiled prompt must stand
+    // on its own, exactly as it will when the person pastes it somewhere.
+    messages: [{ role: "user", content: blocks }],
+  };
+
+  if (caps.supportsEffort && effort) request.output_config = { effort };
   if (caps.supportsAdaptiveThinking) request.thinking = { type: "adaptive" };
 
   return request;

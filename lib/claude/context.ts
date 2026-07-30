@@ -163,6 +163,73 @@ export function buildContext({
   return blocks;
 }
 
+/**
+ * Blocks for the test run — a faithful simulation of pasting the finished prompt
+ * into a chat window with the files attached.
+ *
+ * Two differences from `buildContext`, both load-bearing:
+ *
+ * 1. The brief is absent. The whole question a test run answers is whether the
+ *    *compiled prompt* carries enough information on its own. Include the brief
+ *    and the model can read the answer out of it, so a prompt that omits a
+ *    requirement still passes — the test would score the brief, not the prompt.
+ * 2. Excluded files ARE attached, without their role labels. A real user's folder
+ *    still contains the superseded token sheet; the prompt is what has to say
+ *    "don't use it". Withholding the file would make "didn't use the excluded
+ *    file" pass for free, which is exactly the checklist item worth testing.
+ *
+ * No cache_control: the compiled prompt changes on every compile, so there is no
+ * stable prefix here worth a breakpoint.
+ */
+export function buildTestRunBlocks({
+  attachments,
+  compiledPrompt,
+}: {
+  attachments: ContextAttachment[];
+  compiledPrompt: string;
+}): ContentBlock[] {
+  const blocks: ContentBlock[] = [];
+
+  for (const file of attachments) {
+    if (file.anthropic_file_id) {
+      const isImage =
+        file.mime.startsWith("image/") && file.mime !== "image/svg+xml";
+      blocks.push(
+        isImage
+          ? { type: "image", source: { type: "file", file_id: file.anthropic_file_id } }
+          : {
+              type: "document",
+              source: { type: "file", file_id: file.anthropic_file_id },
+              title: file.filename,
+            },
+      );
+      // Filenames only — a real attachment shows its name and nothing else.
+      blocks.push({
+        type: "text",
+        text: `The preceding file is "${file.filename}".`,
+      });
+      continue;
+    }
+
+    if (file.extracted_text) {
+      blocks.push({
+        type: "text",
+        text: `<file name="${file.filename}">\n${file.extracted_text}\n</file>`,
+      });
+      continue;
+    }
+
+    blocks.push({
+      type: "text",
+      text: `<file name="${file.filename}" contents="unavailable" />`,
+    });
+  }
+
+  blocks.push({ type: "text", text: compiledPrompt });
+
+  return blocks;
+}
+
 /** Whether any block cites a file_id, which gates the Files API beta header. */
 export function citesFiles(blocks: ContentBlock[]): boolean {
   return blocks.some(
