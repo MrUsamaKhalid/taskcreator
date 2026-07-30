@@ -4,9 +4,11 @@ import { redirect } from "next/navigation";
 
 import type { Brief } from "@/lib/brief";
 import { EMPTY_BRIEF } from "@/lib/brief";
+import { STORAGE_BUCKET } from "@/lib/config";
 import type { Database } from "@/lib/database.types";
 import { createClient } from "@/lib/supabase/server";
 
+type AttachmentRole = Database["public"]["Enums"]["attachment_role"];
 type CompileMode = Database["public"]["Enums"]["compile_mode"];
 type PromptStatus = Database["public"]["Enums"]["prompt_status"];
 
@@ -239,4 +241,63 @@ export async function duplicatePrompt(promptId: string) {
     .eq("id", newPrompt.id);
 
   redirect(`/prompts/${newPrompt.id}`);
+}
+
+// ---------------------------------------------------------------------------
+// Attachments
+// ---------------------------------------------------------------------------
+
+export async function setAttachmentRole(
+  attachmentId: string,
+  role: AttachmentRole,
+) {
+  const { supabase } = await requireUser();
+  const { error } = await supabase
+    .from("attachments")
+    .update({ role })
+    .eq("id", attachmentId);
+  if (error) throw new Error(error.message);
+}
+
+export async function setAttachmentDescription(
+  attachmentId: string,
+  description: string,
+) {
+  const { supabase } = await requireUser();
+  const { error } = await supabase
+    .from("attachments")
+    .update({ description })
+    .eq("id", attachmentId);
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * Delete an attachment row and its stored object.
+ *
+ * The storage object is removed first: a leftover row pointing at a missing file
+ * is a visible, fixable error, whereas a leftover object with no row is invisible
+ * and accumulates silently.
+ *
+ * Note the Anthropic Files API copy is intentionally left in place — it is free
+ * to store, keyed by an opaque id nothing else references, and deleting it would
+ * break any duplicated prompt that shares the id.
+ */
+export async function deleteAttachment(attachmentId: string) {
+  const { supabase } = await requireUser();
+
+  const { data: attachment } = await supabase
+    .from("attachments")
+    .select("storage_path")
+    .eq("id", attachmentId)
+    .maybeSingle();
+
+  if (attachment?.storage_path) {
+    await supabase.storage.from(STORAGE_BUCKET).remove([attachment.storage_path]);
+  }
+
+  const { error } = await supabase
+    .from("attachments")
+    .delete()
+    .eq("id", attachmentId);
+  if (error) throw new Error(error.message);
 }
