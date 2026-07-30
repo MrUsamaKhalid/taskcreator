@@ -69,10 +69,19 @@ using `(select auth.uid())` rather than bare `auth.uid()`, so Postgres evaluates
 the subquery once per statement instead of once per row. `user_id` is
 denormalised onto child tables so no policy needs a join.
 
-**Prompt caching.** The Claude endpoints share one byte-identical system prompt
-and place the endpoint-specific instruction *after* the `cache_control`
-breakpoint, so review / checklist / compile / grade calls on the same brief all
-read a single cache entry rather than writing four.
+**Model tiering.** Endpoints run on different models by how much judgement each
+needs: Opus 5 for review and compile, Sonnet 5 for the checklist, Haiku 4.5 for
+grading. `MODEL_CAPS` in `lib/config.ts` records the per-model constraints,
+because they are 400s rather than soft failures — Haiku 4.5 rejects
+`output_config.effort`, takes no adaptive thinking, and needs a 4096-token prefix
+before caching engages at all, against 512 on Opus 5.
+
+**Prompt caching.** Each endpoint uses one byte-identical system prompt and puts
+its specific instruction *after* the `cache_control` breakpoint, so the shared
+brief prefix is reused rather than re-billed. Caches are scoped per model, so
+tiering and caching partly work against each other: review and compile (both
+Opus 5) share an entry, while the checklist and grade calls each pay their own
+write. The cheaper per-token rates still win comfortably.
 
 ## Scripts
 

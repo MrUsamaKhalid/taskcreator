@@ -97,8 +97,12 @@ Plus/Pro subscription. Those subscriptions entitle you to use their own first-pa
 clients (Claude Code, the ChatGPT app, Codex CLI), not to route another
 application's traffic through them.
 
-If per-token cost is a concern, the levers that actually exist are model choice
-and effort per endpoint — see `EFFORT` and `MODEL` in `lib/config.ts`. The
-mechanical calls (grading an output against explicit yes/no criteria, drafting
-checklist items) hold up well on a cheaper model; the judgement-heavy ones
-(review, compile) are where Opus earns its price.
+Cost is managed by tiering models per endpoint — see `ENDPOINT_MODEL` and
+`ENDPOINT_EFFORT` in `lib/config.ts`. Review and compile run on Opus 5, the
+checklist on Sonnet 5, grading on Haiku 4.5. That lands around $0.15–0.25 per
+full cycle rather than roughly $0.50 on Opus throughout.
+
+`MODEL_CAPS` in the same file records why the tiering isn't just a string swap:
+Haiku 4.5 rejects `output_config.effort` outright, doesn't take adaptive
+thinking, and needs a 4096-token prefix before caching engages at all — against
+512 on Opus 5. Sending an unsupported field is a 400, not a soft failure.
