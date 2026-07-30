@@ -322,12 +322,15 @@ test("no endpoint asks for more output than its model can produce", () => {
 });
 
 test("a json schema lands in output_config.format alongside effort", () => {
-  const schema = { type: "object", properties: {}, additionalProperties: false };
+  const format = {
+    type: "json_schema" as const,
+    schema: { type: "object", properties: {}, additionalProperties: false },
+  };
   const withEffort = shapeRequest({
     endpoint: "review",
     blocks: ctx(),
     instruction: "go",
-    jsonSchema: schema,
+    format,
   });
   assert.equal(withEffort.output_config?.format?.type, "json_schema");
   assert.equal(withEffort.output_config?.effort, "high");
@@ -337,7 +340,7 @@ test("a json schema lands in output_config.format alongside effort", () => {
     endpoint: "grade",
     blocks: ctx(),
     instruction: "go",
-    jsonSchema: schema,
+    format,
   });
   assert.equal(noEffort.output_config?.format?.type, "json_schema");
   assert.equal(noEffort.output_config?.effort, undefined);
