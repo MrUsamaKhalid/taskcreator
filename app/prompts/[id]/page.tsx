@@ -1,6 +1,9 @@
 import { notFound } from "next/navigation";
 
 import { EMPTY_BRIEF, type Brief } from "@/lib/brief";
+import type { Review } from "@/lib/claude/schemas";
+import { ReviewSchema } from "@/lib/claude/schemas";
+import { totalCost, type TokenUsage } from "@/lib/pricing";
 import { createClient } from "@/lib/supabase/server";
 
 import { Workspace } from "./workspace";
@@ -17,6 +20,33 @@ function toBrief(value: unknown): Brief {
     if (typeof raw === "string") brief[key] = raw;
   }
   return brief;
+}
+
+/**
+ * Validate the stored review rather than casting it.
+ *
+ * The payload column is jsonb written by whatever schema was current when the
+ * review ran. Casting an older shape into the pane renders `undefined.map` as a
+ * blank screen; parsing it means an incompatible row simply doesn't show, and
+ * re-running fixes it.
+ */
+function toReview(value: unknown): Review | null {
+  const parsed = ReviewSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * Sum what the stored calls cost.
+ *
+ * `model` is whatever actually served the call, which a refusal fallback can
+ * make something outside our rate table; pricing tolerates that by charging the
+ * highest known rate rather than dropping the row.
+ */
+function spendOf(rows: Array<{ model: string; usage: unknown }> | null): number {
+  if (!rows) return 0;
+  return totalCost(
+    rows.map((row) => ({ model: row.model, usage: row.usage as TokenUsage })),
+  );
 }
 
 export default async function PromptPage({
@@ -40,12 +70,12 @@ export default async function PromptPage({
   const { data: version } = prompt.current_version_id
     ? await supabase
         .from("prompt_versions")
-        .select("id, brief, draft_prompt, dismissed_chips")
+        .select("id, brief, draft_prompt, dismissed_chips, compiled_prompt, compile_mode")
         .eq("id", prompt.current_version_id)
         .maybeSingle()
     : await supabase
         .from("prompt_versions")
-        .select("id, brief, draft_prompt, dismissed_chips")
+        .select("id, brief, draft_prompt, dismissed_chips, compiled_prompt, compile_mode")
         .eq("prompt_id", prompt.id)
         .order("version_no", { ascending: false })
         .limit(1)
@@ -53,11 +83,34 @@ export default async function PromptPage({
 
   if (!version) notFound();
 
-  const { data: attachments } = await supabase
-    .from("attachments")
-    .select("id, filename, mime, size_bytes, role, extraction_status")
-    .eq("prompt_version_id", version.id)
-    .order("created_at", { ascending: true });
+  const [
+    { data: attachments },
+    { data: reviews },
+    { data: checklist },
+    { data: testRuns },
+  ] = await Promise.all([
+    supabase
+      .from("attachments")
+      .select("id, filename, mime, size_bytes, role, extraction_status")
+      .eq("prompt_version_id", version.id)
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("reviews")
+      .select("payload, usage, model, created_at")
+      .eq("prompt_version_id", version.id)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("checklist_items")
+      .select("id, text, category, source, ordinal")
+      .eq("prompt_version_id", version.id)
+      .order("ordinal", { ascending: true }),
+    supabase
+      .from("test_runs")
+      .select("usage, model")
+      .eq("prompt_version_id", version.id),
+  ]);
+
+  const latestReview = reviews?.[0] ?? null;
 
   return (
     <Workspace
@@ -70,6 +123,12 @@ export default async function PromptPage({
       initialDraftPrompt={version.draft_prompt}
       initialDismissedChips={version.dismissed_chips ?? []}
       initialAttachments={attachments ?? []}
+      initialReview={latestReview ? toReview(latestReview.payload) : null}
+      initialReviewedAt={latestReview?.created_at ?? null}
+      initialChecklist={checklist ?? []}
+      initialCompiledPrompt={version.compiled_prompt ?? ""}
+      initialCompileMode={version.compile_mode ?? "structured"}
+      persistedSpendUsd={spendOf(reviews) + spendOf(testRuns)}
     />
   );
 }
