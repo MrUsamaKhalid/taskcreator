@@ -9,6 +9,7 @@ import {
   type Brief,
   type ChipAttachment,
   briefCompletion,
+  missingReferencedFiles,
   briefIsComplete,
   evaluateFieldChips,
   referencedFilenames,
@@ -373,6 +374,8 @@ function CoveragePane({
   const completion = briefCompletion(ctx, dismissedChips);
   const complete = briefIsComplete(brief);
   const referenced = referencedFilenames(brief);
+  // Same comparison the chip uses, rather than a second one that can disagree.
+  const missing = new Set(missingReferencedFiles(ctx));
 
   return (
     <div className="p-5">
@@ -428,9 +431,7 @@ function CoveragePane({
         {referenced.length > 0 ? (
           <ul className="mt-2 space-y-1">
             {referenced.map((name) => {
-              const attached = attachments.some((a) =>
-                a.filename.toLowerCase().includes(name),
-              );
+              const attached = !missing.has(name);
               return (
                 <li key={name} className="flex items-center gap-2 text-xs">
                   <span className={attached ? "text-good" : "text-warn"} aria-hidden>
@@ -454,11 +455,13 @@ function CoveragePane({
         <p className="mt-1 text-sm text-muted">
           {!complete
             ? "Fill every brief box, then the AI steps unlock."
-            : draftPrompt.trim().length === 0
-              ? "Brief is complete. Draft your prompt in step 3."
-              : compiled
-                ? "You have a finished prompt. Run it in step 7 to see whether it holds up."
-                : "Everything is in place. Review it in step 4, or go straight to compiling in step 6."}
+            : missing.size > 0
+              ? `Your brief refers to ${[...missing].join(", ")}, which ${missing.size === 1 ? "is not attached" : "are not attached"}. Attach ${missing.size === 1 ? "it" : "them"}, or edit the brief to stop naming ${missing.size === 1 ? "it" : "them"} — the compiled prompt will point at ${missing.size === 1 ? "a file" : "files"} the AI cannot open.`
+              : draftPrompt.trim().length === 0
+                ? "Brief is complete. Draft your prompt in step 3."
+                : compiled
+                  ? "You have a finished prompt. Run it in step 7 to see whether it holds up."
+                  : "Everything is in place. Review it in step 4, or go straight to compiling in step 6."}
         </p>
       </div>
     </div>
