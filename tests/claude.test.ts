@@ -252,13 +252,26 @@ test("checklist runs on Sonnet 5 at medium effort", () => {
   assert.deepEqual(req.thinking, { type: "adaptive" });
 });
 
-test("refusal fallback is always on, with the header that matches the scalar form", () => {
+test("refusal fallback goes only to models that accept it", () => {
+  // Not a preference. A live call returned 400 "'claude-sonnet-5' does not
+  // support the `fallbacks` parameter", which took out checklist and grade —
+  // two of the five endpoints — while every unit assertion still passed,
+  // because the shape was internally consistent and simply wrong.
   for (const endpoint of ENDPOINTS) {
     const req = shapeRequest({ endpoint, blocks: ctx(), instruction: "go" });
-    assert.equal(req.fallbacks, "default", endpoint);
-    assert.ok(
+    const supported = MODEL_CAPS[ENDPOINT_MODEL[endpoint]].supportsFallbacks;
+
+    assert.equal(
+      req.fallbacks,
+      supported ? "default" : undefined,
+      `${endpoint} (${ENDPOINT_MODEL[endpoint]}) fallbacks`,
+    );
+    // The header tracks the parameter: advertising a beta whose parameter was
+    // omitted is the same mistake in the other direction.
+    assert.equal(
       req.betas.includes("server-side-fallback-2026-07-01"),
-      `${endpoint} must send the -07-01 header for fallbacks:"default"`,
+      supported,
+      `${endpoint} beta header must match whether fallbacks was sent`,
     );
     assert.equal(
       req.betas.includes("server-side-fallback-2026-06-01"),
