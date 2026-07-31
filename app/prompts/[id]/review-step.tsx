@@ -4,9 +4,20 @@ import { useState } from "react";
 
 import { CallError, RunButton } from "@/components/run-button";
 import { RatingBadge } from "@/components/rating-badge";
+import {
+  REVIEW_SECTIONS,
+  type ReviewSection,
+} from "@/lib/claude/prompts";
 import type { Review } from "@/lib/claude/schemas";
 import { type CallCost, ModelCallError, costOfResult, postJson } from "@/lib/model-call";
 import { formatUsd } from "@/lib/pricing";
+
+/** What the button says while each section is in flight. */
+const STAGE_LABEL: Record<ReviewSection, string> = {
+  brief: "Reading your brief",
+  prompt: "Reading your draft prompt",
+  attachments: "Checking your files",
+};
 
 type Section = Review["brief"];
 
@@ -34,20 +45,45 @@ export function ReviewStep({
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<{ message: string; kind?: string } | null>(null);
   const [cost, setCost] = useState<number | null>(null);
+  const [stage, setStage] = useState<ReviewSection | null>(null);
 
+  // Three calls, one per section, run in sequence.
+  //
+  // Sequence rather than parallel for two reasons. A cache entry only becomes
+  // readable once the response that wrote it has started coming back, so three
+  // concurrent calls would each pay a full cache write of the same brief
+  // instead of one write and two cheap reads. And each call is a separate
+  // function invocation with its own 60s budget, so serialising costs nothing
+  // in headroom.
+  //
+  // Partial results are kept on failure: if attachments fails, the two sections
+  // already paid for stay on screen rather than being thrown away.
   async function run() {
     setRunning(true);
     setError(null);
+    setStage(null);
     try {
-      const result = await postJson<Record<string, unknown>>("/api/review", {
-        versionId,
-      });
-      setReview(result.review as Review);
-      setReviewedAt(typeof result.createdAt === "string" ? result.createdAt : null);
-      const spent = costOfResult(result);
-      if (spent) {
-        setCost(spent.costUsd);
-        onSpend(spent);
+      let completed: Partial<Review> = {};
+      let spentTotal = 0;
+
+      for (const section of REVIEW_SECTIONS) {
+        setStage(section);
+        const result = await postJson<Record<string, unknown>>("/api/review", {
+          versionId,
+          section,
+          completed,
+        });
+
+        completed = result.review as Partial<Review>;
+        setReview(completed as Review);
+
+        const spent = costOfResult(result);
+        if (spent) {
+          spentTotal += spent.costUsd;
+          setCost(spentTotal);
+          onSpend(spent);
+        }
+        if (typeof result.createdAt === "string") setReviewedAt(result.createdAt);
       }
     } catch (caught) {
       setError({
@@ -56,6 +92,7 @@ export function ReviewStep({
       });
     } finally {
       setRunning(false);
+      setStage(null);
     }
   }
 
@@ -63,7 +100,9 @@ export function ReviewStep({
     <div>
       <RunButton
         label={review ? "Review again" : "Review my brief"}
-        runningLabel="Reading everything…"
+        runningLabel={
+          stage ? `${STAGE_LABEL[stage]} (${REVIEW_SECTIONS.indexOf(stage) + 1} of 3)…` : "Reading everything…"
+        }
         running={running}
         disabled={!ready}
         hint={
