@@ -493,6 +493,24 @@ test("an unknown model still prices, because a refusal fallback returns one", ()
   );
   assert.equal(isPricedModel("claude-opus-4-8"), false);
   assert.equal(isPricedModel("claude-opus-5"), true);
+  // A live grade call comes back as claude-haiku-4-5-20251001, not the alias.
+  assert.equal(isPricedModel("claude-haiku-4-5-20251001"), true);
+});
+
+test("a dated snapshot prices as its alias, not as an unknown model", () => {
+  // Observed live: grade requested claude-haiku-4-5 and the response reported
+  // claude-haiku-4-5-20251001. That missed the rate table, took the
+  // unknown-model branch, and billed a Haiku call at Opus rates — a ~5x
+  // overstatement on the cheapest step in the app.
+  const usage = { input_tokens: 6002, output_tokens: 1011 };
+  const snapshot = costBreakdown("claude-haiku-4-5-20251001", usage);
+  const alias = costBreakdown("claude-haiku-4-5", usage);
+  assert.equal(snapshot.totalCost, alias.totalCost);
+
+  // And the over-estimate still applies to something genuinely unrecognised,
+  // which is the case that branch was actually written for.
+  const unknown = costBreakdown("claude-something-unreleased", usage);
+  assert.ok(unknown.totalCost > alias.totalCost);
 });
 
 test("input_tokens is the uncached remainder, so the total is the sum of three", () => {
