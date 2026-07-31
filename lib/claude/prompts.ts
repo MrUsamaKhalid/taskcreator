@@ -11,28 +11,57 @@ import { BRIEF_FIELDS } from "@/lib/brief";
 
 const BRIEF_KEYS = BRIEF_FIELDS.map((field) => field.key).join(", ");
 
-export const REVIEW_INSTRUCTION = `Review the brief and the draft prompt above. Return JSON matching the schema.
-
-Three sections:
-
-1. **brief** — exactly one criterion per box, six in total, with keys: ${BRIEF_KEYS}. Use the box's own name as the label. Judge whether each box says enough that a model could not plausibly get it wrong. A box can be long and still be weak if it is all adjectives.
-
-2. **prompt** — criteria with these keys, in order:
-   - clarity — could a model misread what is being asked?
-   - specificity — does the prompt carry the brief's actual constraints, or does it gesture at them?
-   - completeness — is anything the person cares about left for the model to invent?
-   - ambiguity_risk — name the single most likely way a competent model goes wrong here.
-   - inputs — are the prompt plus the attached files enough to do the task at all?
-   - model_fit — would a current frontier model land this in one shot? If not, say what to add.
-
-3. **attachments** — criteria with keys: present, content, relevance. Judge whether every file the brief names is actually attached, whether the contents match what the brief claims, and whether anything attached is irrelevant. If there are no attachments at all, say so plainly and rate accordingly — do not invent rows about files that do not exist.
+/**
+ * Review runs as three calls, one per section, rather than one call for all of
+ * it.
+ *
+ * Not a style choice. The combined review is roughly 4,000 output tokens, and a
+ * model writes at somewhere around 50-80 tokens a second, so simply typing the
+ * answer consumed the whole 60s the platform allows before any thinking. It
+ * timed out on every real brief regardless of which model ran it — swapping
+ * Opus 5 for Sonnet 5 changed the price and not the arithmetic.
+ *
+ * A third of the output is a third of the time. Each call lands around 20s with
+ * room to spare, and the sections arrive one at a time instead of the whole
+ * thing failing at once.
+ *
+ * The shared preamble is byte-identical across the three so they hit the same
+ * cached brief prefix; only the trailing task differs.
+ */
+const SECTION_PREAMBLE = `Review the brief and the draft prompt above. Return JSON matching the schema: one rating, one summary, and the criteria listed below.
 
 Rules for every criterion:
 - rating is one of excellent, good, needs_work, missing.
 - comment is one or two sentences on what is or is not there. No restating the brief.
 - suggestion is the concrete fix: quote the text to use, the value to state, or the sentence to add. Leave it empty only when the rating is excellent.
 
-Grade against "would this reliably produce what they want", not against effort spent.`;
+Grade against "would this reliably produce what they want", not against effort spent.
+
+Your task for this call:
+
+`;
+
+export const REVIEW_BRIEF_INSTRUCTION = `${SECTION_PREAMBLE}Judge the six brief boxes. Exactly one criterion per box, six in total, with keys: ${BRIEF_KEYS}. Use the box's own name as the label. Judge whether each box says enough that a model could not plausibly get it wrong. A box can be long and still be weak if it is all adjectives.`;
+
+export const REVIEW_PROMPT_INSTRUCTION = `${SECTION_PREAMBLE}Judge the draft prompt. Criteria with these keys, in order:
+- clarity — could a model misread what is being asked?
+- specificity — does the prompt carry the brief's actual constraints, or does it gesture at them?
+- completeness — is anything the person cares about left for the model to invent?
+- ambiguity_risk — name the single most likely way a competent model goes wrong here.
+- inputs — are the prompt plus the attached files enough to do the task at all?
+- model_fit — would a current frontier model land this in one shot? If not, say what to add.`;
+
+export const REVIEW_ATTACHMENTS_INSTRUCTION = `${SECTION_PREAMBLE}Judge the attachments. Criteria with keys: present, content, relevance. Judge whether every file the brief names is actually attached, whether the contents match what the brief claims, and whether anything attached is irrelevant. If there are no attachments at all, say so plainly and rate accordingly — do not invent rows about files that do not exist.`;
+
+/** The three calls a full review is made of, in the order they are run. */
+export const REVIEW_SECTIONS = ["brief", "prompt", "attachments"] as const;
+export type ReviewSection = (typeof REVIEW_SECTIONS)[number];
+
+export const REVIEW_SECTION_INSTRUCTION: Record<ReviewSection, string> = {
+  brief: REVIEW_BRIEF_INSTRUCTION,
+  prompt: REVIEW_PROMPT_INSTRUCTION,
+  attachments: REVIEW_ATTACHMENTS_INSTRUCTION,
+};
 
 export const CHECKLIST_INSTRUCTION = (
   target: number,

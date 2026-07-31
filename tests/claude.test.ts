@@ -17,7 +17,11 @@ import {
   countBreakpoints,
   type ContextAttachment,
 } from "@/lib/claude/context";
-import { gradePayload } from "@/lib/claude/prompts";
+import {
+  REVIEW_SECTIONS,
+  REVIEW_SECTION_INSTRUCTION,
+  gradePayload,
+} from "@/lib/claude/prompts";
 import { costBreakdown, isPricedModel } from "@/lib/pricing";
 import {
   SHARED_SYSTEM,
@@ -295,6 +299,25 @@ test("a named-but-missing file keeps Overall below 100%", () => {
     briefCompletion(notAttached, []) < briefCompletion(attached, []),
     "a file the brief names but nobody attached must cost something",
   );
+});
+
+test("the three review sections share a byte-identical preamble", () => {
+  // Review is split into three calls because the combined output was ~4,000
+  // tokens and generation alone consumed the whole 60s the platform allows.
+  // The split only pays off if the three still hit one cached brief prefix, so
+  // everything above the per-section task has to match exactly.
+  const instructions = REVIEW_SECTIONS.map((s) => REVIEW_SECTION_INSTRUCTION[s]);
+  const marker = "Your task for this call:";
+
+  const preambles = instructions.map((text) => {
+    const at = text.indexOf(marker);
+    assert.notEqual(at, -1, "every section must carry the shared preamble");
+    return text.slice(0, at + marker.length);
+  });
+  assert.equal(new Set(preambles).size, 1, "preambles diverged, splitting the cache");
+
+  // And the tasks themselves must actually differ, or three calls buy nothing.
+  assert.equal(new Set(instructions).size, 3);
 });
 
 // ---------------------------------------------------------------------------
