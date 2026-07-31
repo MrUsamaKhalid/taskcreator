@@ -18,9 +18,12 @@ import { costBreakdown, formatTokens, formatUsd } from "@/lib/pricing";
 export function SpendMeter({
   persistedUsd,
   calls,
+  uncountedCalls = 0,
 }: {
   persistedUsd: number;
   calls: CallCost[];
+  /** Steps that were cut off before reporting usage. Billed, but unmeasurable. */
+  uncountedCalls?: number;
 }) {
   const sessionUsd = calls.reduce((sum, call) => sum + call.costUsd, 0);
 
@@ -39,9 +42,19 @@ export function SpendMeter({
       <div className="flex items-baseline justify-between border-b border-line-soft px-4 py-3">
         <span className="text-sm font-semibold text-navy">Spend</span>
         <span className="text-sm font-medium text-ink">
+          {uncountedCalls > 0 ? "at least " : ""}
           {formatUsd(persistedUsd + sessionUsd)}
         </span>
       </div>
+
+      {uncountedCalls > 0 && (
+        <p className="border-b border-line-soft bg-warn-bg px-4 py-2 text-xs text-muted">
+          {uncountedCalls === 1 ? "One step was" : `${uncountedCalls} steps were`} cut
+          off before reporting usage. That work still ran and was still charged, so the
+          real figure is higher than this. Anthropic&rsquo;s console has the exact
+          number.
+        </p>
+      )}
 
       <dl className="divide-y divide-line-soft text-xs">
         <Row
