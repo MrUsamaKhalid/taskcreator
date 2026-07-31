@@ -20,6 +20,11 @@ import {
   shapeTestRun,
 } from "@/lib/claude/request";
 
+/** betas is omitted rather than empty, so read it through this. */
+function betasOf(req: { betas?: string[] }): string[] {
+  return req.betas ?? [];
+}
+
 const ENDPOINTS: Endpoint[] = ["review", "checklist", "compile", "testRun", "grade"];
 
 const brief: Brief = {
@@ -269,16 +274,39 @@ test("refusal fallback goes only to models that accept it", () => {
     // The header tracks the parameter: advertising a beta whose parameter was
     // omitted is the same mistake in the other direction.
     assert.equal(
-      req.betas.includes("server-side-fallback-2026-07-01"),
+      betasOf(req).includes("server-side-fallback-2026-07-01"),
       supported,
       `${endpoint} beta header must match whether fallbacks was sent`,
     );
     assert.equal(
-      req.betas.includes("server-side-fallback-2026-06-01"),
+      betasOf(req).includes("server-side-fallback-2026-06-01"),
       false,
       `${endpoint} must not send the array-form header`,
     );
   }
+});
+
+test("betas is omitted, never sent empty", () => {
+  // An empty array is not the same as no header. The SDK renders it as
+  // `anthropic-beta:` with an empty value and the API rejects that outright:
+  // "Unexpected value(s) `` for the `anthropic-beta` header". Checklist on
+  // Sonnet 5 with no attachments is exactly that case — no fallbacks, no files.
+  const checklist = shapeRequest({
+    endpoint: "checklist",
+    blocks: ctx(),
+    instruction: "go",
+  });
+  assert.equal(
+    checklist.betas,
+    undefined,
+    "an endpoint needing no beta must omit the field, not send []",
+  );
+
+  for (const endpoint of ENDPOINTS) {
+    const req = shapeRequest({ endpoint, blocks: ctx(), instruction: "go" });
+    assert.notEqual(req.betas?.length, 0, `${endpoint} sent an empty betas array`);
+  }
+  assert.notEqual(shapeTestRun(buildTestRunBlocks({ attachments: [], compiledPrompt: "x" })).betas?.length, 0);
 });
 
 test("Files beta is sent only when a block actually cites a file_id", () => {
@@ -287,14 +315,14 @@ test("Files beta is sent only when a block actually cites a file_id", () => {
     blocks: ctx([attachment()]),
     instruction: "go",
   });
-  assert.ok(withFiles.betas.includes("files-api-2025-04-14"));
+  assert.ok(betasOf(withFiles).includes("files-api-2025-04-14"));
 
   const withoutFiles = shapeRequest({
     endpoint: "review",
     blocks: ctx(),
     instruction: "go",
   });
-  assert.equal(withoutFiles.betas.includes("files-api-2025-04-14"), false);
+  assert.equal(betasOf(withoutFiles).includes("files-api-2025-04-14"), false);
 });
 
 test("the system prompt is byte-identical across endpoints, or caching breaks", () => {
@@ -420,15 +448,15 @@ test("excluded files ARE attached to the test run, so the exclusion is actually 
 test("the test run keeps the defensive parts: fallback, files beta, clamped budget", () => {
   const withFiles = shapeTestRun(testRunBlocks([attachment()]));
   assert.equal(withFiles.fallbacks, "default");
-  assert.ok(withFiles.betas.includes("server-side-fallback-2026-07-01"));
-  assert.ok(withFiles.betas.includes("files-api-2025-04-14"));
+  assert.ok(betasOf(withFiles).includes("server-side-fallback-2026-07-01"));
+  assert.ok(betasOf(withFiles).includes("files-api-2025-04-14"));
   assert.ok(
     withFiles.max_tokens <= MODEL_CAPS[withFiles.model].maxOutputTokens,
     "max_tokens not clamped",
   );
 
   const withoutFiles = shapeTestRun(testRunBlocks());
-  assert.equal(withoutFiles.betas.includes("files-api-2025-04-14"), false);
+  assert.equal(betasOf(withoutFiles).includes("files-api-2025-04-14"), false);
 });
 
 test("grade payload numbers items from zero, matching the schema's index field", () => {
