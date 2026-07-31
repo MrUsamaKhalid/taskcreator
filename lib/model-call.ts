@@ -25,6 +25,29 @@ export class ModelCallError extends Error {
   }
 }
 
+/**
+ * Turn a non-2xx into something a person can act on.
+ *
+ * A gateway timeout is not produced by this app: the platform kills the
+ * function and returns its own HTML error page, so there is no JSON body to
+ * read a message out of and the status code is all we have. Left generic it
+ * surfaced as "Request failed (504)", which reads like a bug rather than the
+ * one thing it actually is — the step took longer than the deployment allows.
+ *
+ * Measured: a review of a full brief runs about 64s against a 60s ceiling, so
+ * this fires on realistic input rather than pathological input.
+ */
+function describeFailure(status: number, serverMessage?: string): string {
+  if (serverMessage) return serverMessage;
+  if (status === 504 || status === 502) {
+    return "This step ran longer than the server allows and was cut off. Opus 5 at high effort on a full brief takes around a minute, and the deployment's limit is 60 seconds. Shortening the brief can bring it under; raising the limit needs a Vercel plan that allows a longer maxDuration.";
+  }
+  if (status === 413) {
+    return "The brief and its attachments were too large to send in one request.";
+  }
+  return `Request failed (${status})`;
+}
+
 /** POST JSON, and turn a non-2xx into an error carrying the server's message. */
 export async function postJson<T>(url: string, body: unknown): Promise<T> {
   const response = await fetch(url, {
@@ -39,7 +62,7 @@ export async function postJson<T>(url: string, body: unknown): Promise<T> {
 
   if (!response.ok) {
     throw new ModelCallError(
-      payload?.error ?? `Request failed (${response.status})`,
+      describeFailure(response.status, payload?.error),
       payload?.kind,
     );
   }
@@ -78,7 +101,7 @@ export async function postStream(
       kind?: string;
     } | null;
     throw new ModelCallError(
-      payload?.error ?? `Request failed (${response.status})`,
+      describeFailure(response.status, payload?.error),
       payload?.kind,
     );
   }
