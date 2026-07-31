@@ -131,7 +131,13 @@ export function Workspace({
   const briefReady = briefIsComplete(brief);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    // h-dvh, not flex-1: the body is `min-h-full`, so it grows with content and
+    // a flex-1 child inherits an unbounded height. The panes below then have
+    // nothing to clip against, their overflow-y-auto never engages, and the
+    // whole page scrolls as one — taking the coverage panel with it. Pinning
+    // the workspace to the viewport is what makes the two panes scroll
+    // independently and keeps the panel in place.
+    <div className="flex h-dvh min-h-0 flex-col">
       {/* Top bar */}
       <header className="flex items-center gap-4 border-b border-line px-5 py-3">
         <Link

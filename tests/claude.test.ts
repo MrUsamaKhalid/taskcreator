@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { EMPTY_BRIEF, type Brief } from "@/lib/brief";
+import { EMPTY_BRIEF, referencedFilenames, type Brief } from "@/lib/brief";
 import { ENDPOINT_MAX_TOKENS, ENDPOINT_MODEL, MODEL_CAPS } from "@/lib/config";
 import type { Endpoint } from "@/lib/config";
 import {
@@ -226,6 +226,42 @@ test("all six brief boxes appear, and a blank one is marked blank", () => {
     assert.ok(text.includes(label), `missing box: ${label}`);
   }
   assert.ok(text.includes("(left blank)"), "blank box should be flagged");
+});
+
+test("a filename is extracted alone, not with the sentence in front of it", () => {
+  // The old character class allowed spaces, so the match ran backwards across
+  // sentence boundaries and returned things like "and compliance. the price and
+  // unit count are read from units.csv" as a single filename. That matched no
+  // attachment, so every attached file was reported missing.
+  const found = referencedFilenames({
+    ...EMPTY_BRIEF,
+    requirements:
+      "R3 · Copy, data, and compliance. The price and unit count are read from units.csv, not invented. R4 · Build the tower from tower-exterior-raw.jpg and composite the sky from sky-plate.jpg.",
+    style_brand: "Follow ostrel-brand-sheet.pdf for palette. Ignore q1-2025-flyer.jpg, that layout is retired.",
+  });
+  assert.deepEqual(found, [
+    "units.csv",
+    "tower-exterior-raw.jpg",
+    "sky-plate.jpg",
+    "ostrel-brand-sheet.pdf",
+    "q1-2025-flyer.jpg",
+  ]);
+  for (const name of found) {
+    assert.equal(name.includes(" "), false, `"${name}" swallowed surrounding prose`);
+  }
+});
+
+test("deliverable filenames are not demanded as attachments", () => {
+  // what_needed and format_specs describe what the prompt should produce. Files
+  // named there cannot be attached — they do not exist yet — so asking for them
+  // is never actionable.
+  const found = referencedFilenames({
+    ...EMPTY_BRIEF,
+    what_needed: "Three retouched stills delivered as aurelis_feed_1x1.jpg and one cut as aurelis_reel_9x16.mp4.",
+    format_specs: "5 files. aurelis_feed_4x5.jpg 1080 × 1350. aurelis_master.psd layered.",
+    requirements: "The price is read from units.csv.",
+  });
+  assert.deepEqual(found, ["units.csv"]);
 });
 
 // ---------------------------------------------------------------------------
