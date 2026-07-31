@@ -9,6 +9,7 @@ import type { Database } from "@/lib/database.types";
 import { createClient } from "@/lib/supabase/server";
 
 type AttachmentRole = Database["public"]["Enums"]["attachment_role"];
+type ChecklistCategory = Database["public"]["Enums"]["checklist_category"];
 type CompileMode = Database["public"]["Enums"]["compile_mode"];
 type PromptStatus = Database["public"]["Enums"]["prompt_status"];
 
@@ -241,6 +242,68 @@ export async function duplicatePrompt(promptId: string) {
     .eq("id", newPrompt.id);
 
   redirect(`/prompts/${newPrompt.id}`);
+}
+
+// ---------------------------------------------------------------------------
+// Checklist
+// ---------------------------------------------------------------------------
+
+/**
+ * Add one hand-written criterion.
+ *
+ * Written items are marked `manual` so regenerating the AI checklist leaves them
+ * alone — see the delete-then-insert in app/api/checklist/route.ts.
+ */
+export async function addChecklistItem(
+  versionId: string,
+  text: string,
+  category: ChecklistCategory,
+) {
+  const { supabase, user } = await requireUser();
+
+  const { data: last } = await supabase
+    .from("checklist_items")
+    .select("ordinal")
+    .eq("prompt_version_id", versionId)
+    .order("ordinal", { ascending: false })
+    .limit(1);
+
+  const { data, error } = await supabase
+    .from("checklist_items")
+    .insert({
+      prompt_version_id: versionId,
+      user_id: user.id,
+      text,
+      category,
+      source: "manual",
+      ordinal: (last?.[0]?.ordinal ?? -1) + 1,
+    })
+    .select("id, text, category, source, ordinal")
+    .single();
+
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function updateChecklistItem(
+  itemId: string,
+  patch: { text?: string; category?: ChecklistCategory },
+) {
+  const { supabase } = await requireUser();
+  const { error } = await supabase
+    .from("checklist_items")
+    .update(patch)
+    .eq("id", itemId);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteChecklistItem(itemId: string) {
+  const { supabase } = await requireUser();
+  const { error } = await supabase
+    .from("checklist_items")
+    .delete()
+    .eq("id", itemId);
+  if (error) throw new Error(error.message);
 }
 
 // ---------------------------------------------------------------------------
