@@ -90,7 +90,10 @@ async function main() {
   // --- Q1: does output_config.format compose with fallbacks: "default"? ---
   console.log("Q1 — structured outputs + fallbacks:'default' + adaptive thinking + effort (Opus 5)");
   const review1 = await callStructured({ endpoint: "review", blocks, instruction: REVIEW_INSTRUCTION, schema: ReviewSchema });
-  const c1 = report("review (cold)", review1.usage, review1.model, review1.costUsd);
+  // Not labelled "cold": the cache is server-side and outlives this process, so
+  // a run started inside the previous run's TTL reads on call 1. That is a real
+  // hit and worth seeing, but it is not something the script can promise.
+  const c1 = report("review (call 1)", review1.usage, review1.model, review1.costUsd);
   record(
     "Q1 structured+fallbacks compose",
     true,
@@ -100,13 +103,13 @@ async function main() {
   // --- Q2: does a second identical call read from cache? ---
   console.log("Q2 — cache read on an identical second call (same model, same prefix)");
   const review2 = await callStructured({ endpoint: "review", blocks, instruction: REVIEW_INSTRUCTION, schema: ReviewSchema });
-  const c2 = report("review (warm)", review2.usage, review2.model, review2.costUsd);
+  const c2 = report("review (call 2)", review2.usage, review2.model, review2.costUsd);
   record(
     "Q2 cache_read_input_tokens > 0",
     c2.read > 0,
     c2.read > 0
-      ? `${c2.read} tokens read from cache (cold call wrote ${c1.write})`
-      : `still 0 after a cold write of ${c1.write} — breakpoints are not producing a reusable prefix`,
+      ? `${c2.read} tokens read from cache (call 1: wrote ${c1.write}, read ${c1.read})`
+      : `still 0 after call 1 wrote ${c1.write} — breakpoints are not producing a reusable prefix`,
   );
 
   // --- Remaining endpoints: each exercises a different per-model omission ---
