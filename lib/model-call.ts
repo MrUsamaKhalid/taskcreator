@@ -25,6 +25,58 @@ export class ModelCallError extends Error {
   }
 }
 
+/**
+ * Turn a non-2xx into something a person can act on.
+ *
+ * A gateway timeout is not produced by this app: the platform kills the
+ * function and returns its own HTML error page, so there is no JSON body to
+ * read a message out of and the status code is all we have. Left generic it
+ * surfaced as "Request failed (504)", which reads like a bug rather than the
+ * one thing it actually is — the step took longer than the deployment allows.
+ *
+ * Deliberately names no model. An earlier version hardcoded "Opus 5 at high
+ * effort", which kept being displayed for a step that had since moved to
+ * Sonnet 5 — a message about the wrong model is worse than a vague one.
+ */
+/**
+ * Fired when a step dies without reporting usage.
+ *
+ * A cross-cutting signal rather than a prop threaded through all five steps:
+ * every one of them already funnels through postJson/streamNdjson, and a new
+ * step added later is covered without remembering to wire anything up.
+ */
+type UncountedListener = () => void;
+const uncountedListeners = new Set<UncountedListener>();
+
+export function onUncountedCall(listener: UncountedListener): () => void {
+  uncountedListeners.add(listener);
+  return () => {
+    uncountedListeners.delete(listener);
+  };
+}
+
+/**
+ * Only for a timeout. A 4xx is rejected before any model call is made, so
+ * nothing was billed and flagging it would overstate spend rather than correct
+ * it.
+ */
+function noteUncounted(status: number): void {
+  if (status !== 504 && status !== 502) return;
+  for (const listener of uncountedListeners) listener();
+}
+
+function describeFailure(status: number, serverMessage?: string): string {
+  noteUncounted(status);
+  if (serverMessage) return serverMessage;
+  if (status === 504 || status === 502) {
+    return "This step ran longer than the 60 seconds this deployment allows, and was cut off before it finished. The work still ran and was still charged. A shorter brief may come in under the limit; otherwise the limit itself has to move.";
+  }
+  if (status === 413) {
+    return "The brief and its attachments were too large to send in one request.";
+  }
+  return `Request failed (${status})`;
+}
+
 /** POST JSON, and turn a non-2xx into an error carrying the server's message. */
 export async function postJson<T>(url: string, body: unknown): Promise<T> {
   const response = await fetch(url, {
@@ -39,7 +91,7 @@ export async function postJson<T>(url: string, body: unknown): Promise<T> {
 
   if (!response.ok) {
     throw new ModelCallError(
-      payload?.error ?? `Request failed (${response.status})`,
+      describeFailure(response.status, payload?.error),
       payload?.kind,
     );
   }
@@ -78,7 +130,7 @@ export async function postStream(
       kind?: string;
     } | null;
     throw new ModelCallError(
-      payload?.error ?? `Request failed (${response.status})`,
+      describeFailure(response.status, payload?.error),
       payload?.kind,
     );
   }

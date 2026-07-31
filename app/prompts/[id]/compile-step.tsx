@@ -122,7 +122,7 @@ export function CompileStep({
             ? "Fill every brief box first."
             : cost !== null
               ? `Last run cost ${formatUsd(cost)}`
-              : "Runs on Opus 5. This one is the deliverable."
+              : "Runs on Sonnet 5. This one is the deliverable."
         }
         onClick={run}
       />

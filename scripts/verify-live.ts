@@ -22,10 +22,10 @@ import {
   CHECKLIST_INSTRUCTION,
   COMPILE_STRUCTURED_INSTRUCTION,
   GRADE_INSTRUCTION,
-  REVIEW_INSTRUCTION,
+  REVIEW_SECTION_INSTRUCTION,
   gradePayload,
 } from "@/lib/claude/prompts";
-import { ChecklistSchema, GradeSchema, ReviewSchema } from "@/lib/claude/schemas";
+import { ChecklistSchema, GradeSchema, SectionSchema } from "@/lib/claude/schemas";
 import type { Brief } from "@/lib/brief";
 import { ENDPOINT_MODEL, MODEL_CAPS } from "@/lib/config";
 
@@ -89,7 +89,7 @@ async function main() {
 
   // --- Q1: does output_config.format compose with fallbacks: "default"? ---
   console.log("Q1 — structured outputs + fallbacks:'default' + adaptive thinking + effort (Opus 5)");
-  const review1 = await callStructured({ endpoint: "review", blocks, instruction: REVIEW_INSTRUCTION, schema: ReviewSchema });
+  const review1 = await callStructured({ endpoint: "review", blocks, instruction: REVIEW_SECTION_INSTRUCTION.brief, schema: SectionSchema });
   // Not labelled "cold": the cache is server-side and outlives this process, so
   // a run started inside the previous run's TTL reads on call 1. That is a real
   // hit and worth seeing, but it is not something the script can promise.
@@ -97,12 +97,12 @@ async function main() {
   record(
     "Q1 structured+fallbacks compose",
     true,
-    `no 400; schema validated, ${review1.data.brief.criteria.length} brief criteria returned`,
+    `no 400; schema validated, ${review1.data.criteria.length} brief criteria returned`,
   );
 
   // --- Q2: does a second identical call read from cache? ---
   console.log("Q2 — cache read on an identical second call (same model, same prefix)");
-  const review2 = await callStructured({ endpoint: "review", blocks, instruction: REVIEW_INSTRUCTION, schema: ReviewSchema });
+  const review2 = await callStructured({ endpoint: "review", blocks, instruction: REVIEW_SECTION_INSTRUCTION.brief, schema: SectionSchema });
   const c2 = report("review (call 2)", review2.usage, review2.model, review2.costUsd);
   record(
     "Q2 cache_read_input_tokens > 0",

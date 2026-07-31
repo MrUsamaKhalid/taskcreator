@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { EMPTY_BRIEF, type Brief } from "@/lib/brief";
+import {
+  EMPTY_BRIEF,
+  briefCompletion,
+  missingReferencedFiles,
+  referencedFilenames,
+  type Brief,
+} from "@/lib/brief";
 import { ENDPOINT_MAX_TOKENS, ENDPOINT_MODEL, MODEL_CAPS } from "@/lib/config";
 import type { Endpoint } from "@/lib/config";
 import {
@@ -11,7 +17,11 @@ import {
   countBreakpoints,
   type ContextAttachment,
 } from "@/lib/claude/context";
-import { gradePayload } from "@/lib/claude/prompts";
+import {
+  REVIEW_SECTIONS,
+  REVIEW_SECTION_INSTRUCTION,
+  gradePayload,
+} from "@/lib/claude/prompts";
 import { costBreakdown, isPricedModel } from "@/lib/pricing";
 import {
   SHARED_SYSTEM,
@@ -228,6 +238,88 @@ test("all six brief boxes appear, and a blank one is marked blank", () => {
   assert.ok(text.includes("(left blank)"), "blank box should be flagged");
 });
 
+test("a filename is extracted alone, not with the sentence in front of it", () => {
+  // The old character class allowed spaces, so the match ran backwards across
+  // sentence boundaries and returned things like "and compliance. the price and
+  // unit count are read from units.csv" as a single filename. That matched no
+  // attachment, so every attached file was reported missing.
+  const found = referencedFilenames({
+    ...EMPTY_BRIEF,
+    requirements:
+      "R3 · Copy, data, and compliance. The price and unit count are read from units.csv, not invented. R4 · Build the tower from tower-exterior-raw.jpg and composite the sky from sky-plate.jpg.",
+    style_brand: "Follow ostrel-brand-sheet.pdf for palette. Ignore q1-2025-flyer.jpg, that layout is retired.",
+  });
+  assert.deepEqual(found, [
+    "units.csv",
+    "tower-exterior-raw.jpg",
+    "sky-plate.jpg",
+    "ostrel-brand-sheet.pdf",
+    "q1-2025-flyer.jpg",
+  ]);
+  for (const name of found) {
+    assert.equal(name.includes(" "), false, `"${name}" swallowed surrounding prose`);
+  }
+});
+
+test("deliverable filenames are not demanded as attachments", () => {
+  // what_needed and format_specs describe what the prompt should produce. Files
+  // named there cannot be attached — they do not exist yet — so asking for them
+  // is never actionable.
+  const found = referencedFilenames({
+    ...EMPTY_BRIEF,
+    what_needed: "Three retouched stills delivered as aurelis_feed_1x1.jpg and one cut as aurelis_reel_9x16.mp4.",
+    format_specs: "5 files. aurelis_feed_4x5.jpg 1080 × 1350. aurelis_master.psd layered.",
+    requirements: "The price is read from units.csv.",
+  });
+  assert.deepEqual(found, ["units.csv"]);
+});
+
+test("a named-but-missing file keeps Overall below 100%", () => {
+  // The panel scored the six boxes only, so it printed "Overall 100%" and
+  // "Everything is in place" directly above two rows marked missing.
+  const filled: Brief = {
+    who_asking: "I am the marketing lead at Ostrel Developments and I own the creative pipeline.",
+    context: "This goes to our media buyer and to compliance before the campaign launches next week.",
+    what_needed: "Three retouched stills and one 15 second cut, five files in total.",
+    requirements: 'Headline exactly "Where the Marina Ends". Price from AED 4,850,000, set at 14 pt.',
+    style_brand: "Restrained. Follow ostrel-brand-sheet.pdf for palette and type.",
+    format_specs: "5 files at 1080 x 1080, JPG, 15 seconds.",
+  };
+
+  const attached = { brief: filled, attachments: [{ filename: "ostrel-brand-sheet.pdf", role: "brand" as const }] };
+  const notAttached = { brief: filled, attachments: [] };
+
+  assert.equal(missingReferencedFiles(attached).length, 0);
+  assert.deepEqual(missingReferencedFiles(notAttached), ["ostrel-brand-sheet.pdf"]);
+
+  // Asserted as a relationship rather than against 1: this brief does not
+  // satisfy every prose chip, and pinning an absolute would make the test fail
+  // for a reason that has nothing to do with attachments.
+  assert.ok(
+    briefCompletion(notAttached, []) < briefCompletion(attached, []),
+    "a file the brief names but nobody attached must cost something",
+  );
+});
+
+test("the three review sections share a byte-identical preamble", () => {
+  // Review is split into three calls because the combined output was ~4,000
+  // tokens and generation alone consumed the whole 60s the platform allows.
+  // The split only pays off if the three still hit one cached brief prefix, so
+  // everything above the per-section task has to match exactly.
+  const instructions = REVIEW_SECTIONS.map((s) => REVIEW_SECTION_INSTRUCTION[s]);
+  const marker = "Your task for this call:";
+
+  const preambles = instructions.map((text) => {
+    const at = text.indexOf(marker);
+    assert.notEqual(at, -1, "every section must carry the shared preamble");
+    return text.slice(0, at + marker.length);
+  });
+  assert.equal(new Set(preambles).size, 1, "preambles diverged, splitting the cache");
+
+  // And the tasks themselves must actually differ, or three calls buy nothing.
+  assert.equal(new Set(instructions).size, 3);
+});
+
 // ---------------------------------------------------------------------------
 // request.ts — every assertion here prevents a 400
 // ---------------------------------------------------------------------------
@@ -243,11 +335,22 @@ test("grade omits effort AND thinking, because Haiku 4.5 rejects both", () => {
   );
 });
 
-test("review sends adaptive thinking and high effort on Opus 5", () => {
+test("review sends adaptive thinking and high effort on Sonnet 5", () => {
+  // Moved off Opus 5: it took 63.9s against a 60s platform ceiling, so it
+  // failed every time and billed for the work anyway.
   const req = shapeRequest({ endpoint: "review", blocks: ctx(), instruction: "go" });
-  assert.equal(req.model, "claude-opus-5");
+  assert.equal(req.model, "claude-sonnet-5");
   assert.deepEqual(req.thinking, { type: "adaptive" });
   assert.equal(req.output_config?.effort, "high");
+});
+
+test("review, compile and checklist share one model, so they share one cache", () => {
+  // Not cosmetic: caches are scoped per model, so a split here means the same
+  // brief prefix is written twice and read back half as often.
+  const models = (["review", "compile", "checklist"] as const).map(
+    (endpoint) => shapeRequest({ endpoint, blocks: ctx(), instruction: "go" }).model,
+  );
+  assert.deepEqual(new Set(models), new Set(["claude-sonnet-5"]));
 });
 
 test("checklist runs on Sonnet 5 at medium effort", () => {
