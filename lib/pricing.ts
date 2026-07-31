@@ -38,16 +38,33 @@ const RATES: Record<ModelId, Rate> = {
  * about money.
  */
 function rateFor(model: string): Rate {
-  const known = RATES[model as ModelId];
+  const known = RATES[canonicalModel(model) as ModelId];
   if (known) return known;
   return Object.values(RATES).reduce((highest, rate) =>
     rate.output > highest.output ? rate : highest,
   );
 }
 
+/**
+ * Resolve a dated snapshot id to the alias the rate table is keyed by.
+ *
+ * Responses do not always echo back the id that was requested: asking for
+ * `claude-haiku-4-5` returns `claude-haiku-4-5-20251001`. Without this, every
+ * grade call missed the table and took the unknown-model branch below, which
+ * prices at the highest card — reporting Opus rates for a Haiku call and
+ * overstating that step by roughly five times.
+ *
+ * Only a trailing 8-digit date is stripped, so a genuinely unfamiliar model
+ * still falls through to the deliberate over-estimate rather than being
+ * silently mapped onto a cheaper rate it never ran at.
+ */
+function canonicalModel(model: string): string {
+  return model.replace(/-\d{8}$/, "");
+}
+
 /** Whether this id is one the rate table prices exactly. */
-export function isPricedModel(model: string): model is ModelId {
-  return model in RATES;
+export function isPricedModel(model: string): boolean {
+  return canonicalModel(model) in RATES;
 }
 
 /**
