@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Step } from "@/components/step";
 import {
@@ -10,13 +10,14 @@ import {
   type ChipAttachment,
   briefCompletion,
   missingReferencedFiles,
+  ignoredButAttached,
   briefIsComplete,
   evaluateFieldChips,
   referencedFilenames,
 } from "@/lib/brief";
 import type { Review } from "@/lib/claude/schemas";
 import type { Database } from "@/lib/database.types";
-import type { CallCost } from "@/lib/model-call";
+import { onUncountedCall, type CallCost } from "@/lib/model-call";
 import { SaveIndicatorText, useAutosave } from "@/lib/use-autosave";
 
 import {
@@ -125,6 +126,16 @@ export function Workspace({
   const recordSpend = useCallback((cost: CallCost) => {
     setCalls((current) => [...current, cost]);
   }, []);
+
+  // A step killed by the platform reports no usage — the response never comes
+  // back — but the model call it started still ran and still billed. Counting
+  // those separately is the honest alternative to showing $0.00 after a
+  // timeout, which reads as "that one was free".
+  const [uncounted, setUncounted] = useState(0);
+  useEffect(
+    () => onUncountedCall(() => setUncounted((current) => current + 1)),
+    [],
+  );
 
   // The gate on every model-backed step. Deliberately just "no box is empty" —
   // the coverage chips are advisory and never block, so making them a
@@ -349,7 +360,11 @@ export function Workspace({
             compiled={compiledPrompt.trim().length > 0}
           />
           <div className="px-5 pb-5">
-            <SpendMeter persistedUsd={persistedSpendUsd} calls={calls} />
+            <SpendMeter
+              persistedUsd={persistedSpendUsd}
+              calls={calls}
+              uncountedCalls={uncounted}
+            />
           </div>
         </aside>
       </div>
@@ -376,6 +391,7 @@ function CoveragePane({
   const referenced = referencedFilenames(brief);
   // Same comparison the chip uses, rather than a second one that can disagree.
   const missing = new Set(missingReferencedFiles(ctx));
+  const wrongBox = ignoredButAttached(ctx);
 
   return (
     <div className="p-5">
@@ -449,6 +465,28 @@ function CoveragePane({
           </p>
         )}
       </div>
+
+      {wrongBox.length > 0 && (
+        <div className="mt-4 rounded-lg border border-warn bg-warn-bg px-4 py-3">
+          <p className="text-sm font-semibold text-navy">
+            In the wrong box
+          </p>
+          <p className="mt-1 text-xs text-muted">
+            Your brief says to ignore {wrongBox.length === 1 ? "this file" : "these files"}, but
+            {wrongBox.length === 1 ? " it is" : " they are"} attached as material to use. Set
+            {wrongBox.length === 1 ? " it" : " them"} to &ldquo;Do not use&rdquo;, or the finished
+            prompt will hand the AI {wrongBox.length === 1 ? "a source" : "sources"} it was told to skip.
+          </p>
+          <ul className="mt-2 space-y-1">
+            {wrongBox.map((name) => (
+              <li key={name} className="flex items-center gap-2 text-xs">
+                <span className="text-warn" aria-hidden>!</span>
+                <code className="font-mono text-ink">{name}</code>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="mt-4 rounded-lg border border-dashed border-line bg-panel px-4 py-3">
         <p className="text-sm font-semibold text-navy">Next</p>

@@ -37,7 +37,35 @@ export class ModelCallError extends Error {
  * Measured: a review of a full brief runs about 64s against a 60s ceiling, so
  * this fires on realistic input rather than pathological input.
  */
+/**
+ * Fired when a step dies without reporting usage.
+ *
+ * A cross-cutting signal rather than a prop threaded through all five steps:
+ * every one of them already funnels through postJson/streamNdjson, and a new
+ * step added later is covered without remembering to wire anything up.
+ */
+type UncountedListener = () => void;
+const uncountedListeners = new Set<UncountedListener>();
+
+export function onUncountedCall(listener: UncountedListener): () => void {
+  uncountedListeners.add(listener);
+  return () => {
+    uncountedListeners.delete(listener);
+  };
+}
+
+/**
+ * Only for a timeout. A 4xx is rejected before any model call is made, so
+ * nothing was billed and flagging it would overstate spend rather than correct
+ * it.
+ */
+function noteUncounted(status: number): void {
+  if (status !== 504 && status !== 502) return;
+  for (const listener of uncountedListeners) listener();
+}
+
 function describeFailure(status: number, serverMessage?: string): string {
+  noteUncounted(status);
   if (serverMessage) return serverMessage;
   if (status === 504 || status === 502) {
     return "This step ran longer than the server allows and was cut off. Opus 5 at high effort on a full brief takes around a minute, and the deployment's limit is 60 seconds. Shortening the brief can bring it under; raising the limit needs a Vercel plan that allows a longer maxDuration.";

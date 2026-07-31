@@ -149,6 +149,41 @@ export function missingReferencedFiles(ctx: ChipContext): string[] {
   );
 }
 
+/** Words that mark a file as one the finished prompt must tell the AI to skip. */
+const IGNORE_CUE =
+  /\b(ignore|don'?t use|do not use|never use|retired|superseded|outdated|out of date|old|previous|last year'?s|deprecated|wrong)\b/i;
+
+/**
+ * Files the brief says to ignore that are attached as usable material.
+ *
+ * A file's role is set by which dropzone it lands in, and nothing checked that
+ * against what the brief actually says about it. Drop last year's flyer into
+ * Input files while the brief says "ignore q1-2025-flyer.jpg" and the compiled
+ * prompt ends up handing the AI a source it was told to skip — the exact
+ * failure the excluded-files feature exists to prevent.
+ *
+ * Matched per sentence, so "ignore X" only ever flags X, not every filename in
+ * the box.
+ */
+export function ignoredButAttached(ctx: ChipContext): string[] {
+  const prose = INPUT_NAMING_KEYS.map((key) => ctx.brief[key] ?? "").join(" ");
+  const usable = ctx.attachments
+    .filter((a) => a.role !== "excluded")
+    .map((a) => a.filename.toLowerCase());
+
+  const flagged = new Set<string>();
+  for (const sentence of prose.split(/(?<=[.!?])\s+|\n+/)) {
+    if (!IGNORE_CUE.test(sentence)) continue;
+    for (const name of referencedFilenames({ ...EMPTY_BRIEF, context: sentence })) {
+      const hit = usable.find(
+        (f) => f === name || f.endsWith(name) || f.includes(name),
+      );
+      if (hit) flagged.add(hit);
+    }
+  }
+  return [...flagged];
+}
+
 function allReferencedFilesAttached(_value: string, ctx: ChipContext): boolean {
   const referenced = referencedFilenames(ctx.brief);
   if (referenced.length === 0) return ctx.attachments.length > 0;
