@@ -34,8 +34,9 @@ export class ModelCallError extends Error {
  * surfaced as "Request failed (504)", which reads like a bug rather than the
  * one thing it actually is — the step took longer than the deployment allows.
  *
- * Measured: a review of a full brief runs about 64s against a 60s ceiling, so
- * this fires on realistic input rather than pathological input.
+ * Deliberately names no model. An earlier version hardcoded "Opus 5 at high
+ * effort", which kept being displayed for a step that had since moved to
+ * Sonnet 5 — a message about the wrong model is worse than a vague one.
  */
 /**
  * Fired when a step dies without reporting usage.
@@ -68,7 +69,7 @@ function describeFailure(status: number, serverMessage?: string): string {
   noteUncounted(status);
   if (serverMessage) return serverMessage;
   if (status === 504 || status === 502) {
-    return "This step ran longer than the server allows and was cut off. Opus 5 at high effort on a full brief takes around a minute, and the deployment's limit is 60 seconds. Shortening the brief can bring it under; raising the limit needs a Vercel plan that allows a longer maxDuration.";
+    return "This step ran longer than the 60 seconds this deployment allows, and was cut off before it finished. The work still ran and was still charged. A shorter brief may come in under the limit; otherwise the limit itself has to move.";
   }
   if (status === 413) {
     return "The brief and its attachments were too large to send in one request.";
