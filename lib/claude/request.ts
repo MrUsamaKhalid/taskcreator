@@ -54,7 +54,12 @@ export type OutputFormat = { type: "json_schema"; schema: Record<string, unknown
 export type ShapedRequest = {
   model: ModelId;
   max_tokens: number;
-  betas: string[];
+  /**
+   * Absent, not empty, when no beta applies. An empty array still renders an
+   * `anthropic-beta:` header with an empty value, which the API rejects with
+   * "Unexpected value(s) `` for the `anthropic-beta` header".
+   */
+  betas?: string[];
   /** Absent on models that reject the parameter. See MODEL_CAPS.supportsFallbacks. */
   fallbacks?: "default";
   /** Absent on the test run, which must not carry the reviewing-engine persona. */
@@ -116,7 +121,6 @@ export function shapeRequest({
   const request: ShapedRequest = {
     model,
     max_tokens: Math.min(ENDPOINT_MAX_TOKENS[endpoint], caps.maxOutputTokens),
-    betas,
     system: [{ type: "text", text: SHARED_SYSTEM }],
     messages: [
       {
@@ -135,6 +139,7 @@ export function shapeRequest({
 
   if (caps.supportsAdaptiveThinking) request.thinking = { type: "adaptive" };
   if (caps.supportsFallbacks) request.fallbacks = "default";
+  if (betas.length > 0) request.betas = betas;
 
   return request;
 }
@@ -169,7 +174,6 @@ export function shapeTestRun(blocks: ContentBlock[]): ShapedRequest {
   const request: ShapedRequest = {
     model,
     max_tokens: Math.min(ENDPOINT_MAX_TOKENS.testRun, caps.maxOutputTokens),
-    betas,
     // `system` is omitted rather than set empty: the compiled prompt must stand
     // on its own, exactly as it will when the person pastes it somewhere.
     messages: [{ role: "user", content: blocks }],
@@ -178,6 +182,7 @@ export function shapeTestRun(blocks: ContentBlock[]): ShapedRequest {
   if (caps.supportsEffort && effort) request.output_config = { effort };
   if (caps.supportsAdaptiveThinking) request.thinking = { type: "adaptive" };
   if (caps.supportsFallbacks) request.fallbacks = "default";
+  if (betas.length > 0) request.betas = betas;
 
   return request;
 }
