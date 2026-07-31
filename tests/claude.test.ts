@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { EMPTY_BRIEF, referencedFilenames, type Brief } from "@/lib/brief";
+import {
+  EMPTY_BRIEF,
+  briefCompletion,
+  missingReferencedFiles,
+  referencedFilenames,
+  type Brief,
+} from "@/lib/brief";
 import { ENDPOINT_MAX_TOKENS, ENDPOINT_MODEL, MODEL_CAPS } from "@/lib/config";
 import type { Endpoint } from "@/lib/config";
 import {
@@ -262,6 +268,33 @@ test("deliverable filenames are not demanded as attachments", () => {
     requirements: "The price is read from units.csv.",
   });
   assert.deepEqual(found, ["units.csv"]);
+});
+
+test("a named-but-missing file keeps Overall below 100%", () => {
+  // The panel scored the six boxes only, so it printed "Overall 100%" and
+  // "Everything is in place" directly above two rows marked missing.
+  const filled: Brief = {
+    who_asking: "I am the marketing lead at Ostrel Developments and I own the creative pipeline.",
+    context: "This goes to our media buyer and to compliance before the campaign launches next week.",
+    what_needed: "Three retouched stills and one 15 second cut, five files in total.",
+    requirements: 'Headline exactly "Where the Marina Ends". Price from AED 4,850,000, set at 14 pt.',
+    style_brand: "Restrained. Follow ostrel-brand-sheet.pdf for palette and type.",
+    format_specs: "5 files at 1080 x 1080, JPG, 15 seconds.",
+  };
+
+  const attached = { brief: filled, attachments: [{ filename: "ostrel-brand-sheet.pdf", role: "brand" as const }] };
+  const notAttached = { brief: filled, attachments: [] };
+
+  assert.equal(missingReferencedFiles(attached).length, 0);
+  assert.deepEqual(missingReferencedFiles(notAttached), ["ostrel-brand-sheet.pdf"]);
+
+  // Asserted as a relationship rather than against 1: this brief does not
+  // satisfy every prose chip, and pinning an absolute would make the test fail
+  // for a reason that has nothing to do with attachments.
+  assert.ok(
+    briefCompletion(notAttached, []) < briefCompletion(attached, []),
+    "a file the brief names but nobody attached must cost something",
+  );
 });
 
 // ---------------------------------------------------------------------------

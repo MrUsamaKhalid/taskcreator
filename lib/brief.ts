@@ -134,13 +134,25 @@ export function referencedFilenames(brief: Brief): string[] {
   return [...new Set((matches ?? []).map((m) => m.trim().toLowerCase()))];
 }
 
+/**
+ * Files the brief names that nothing attached matches.
+ *
+ * The single source of truth for "is this file here?". The coverage panel used
+ * to run its own slightly different comparison, so the panel and the chip could
+ * disagree about the same file.
+ */
+export function missingReferencedFiles(ctx: ChipContext): string[] {
+  const attached = ctx.attachments.map((a) => a.filename.toLowerCase());
+  return referencedFilenames(ctx.brief).filter(
+    (name) =>
+      !attached.some((f) => f === name || f.endsWith(name) || f.includes(name)),
+  );
+}
+
 function allReferencedFilesAttached(_value: string, ctx: ChipContext): boolean {
   const referenced = referencedFilenames(ctx.brief);
   if (referenced.length === 0) return ctx.attachments.length > 0;
-  const attached = ctx.attachments.map((a) => a.filename.toLowerCase());
-  return referenced.every((name) =>
-    attached.some((f) => f === name || f.endsWith(name) || f.includes(name)),
-  );
+  return missingReferencedFiles(ctx).length === 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -281,14 +293,27 @@ export function evaluateFieldChips(
   }));
 }
 
-/** How complete the brief looks overall — drives the status dot in the rail. */
+/**
+ * How complete the brief looks overall — drives the status dot in the rail.
+ *
+ * A file the brief names but nobody attached counts against this. Scoring the
+ * six boxes alone let the panel print "Overall 100%" and "Everything is in
+ * place" directly beneath two rows marked missing, which is the one thing a
+ * coverage panel must never do.
+ */
 export function briefCompletion(ctx: ChipContext, dismissed: string[]): number {
   const chips = BRIEF_FIELDS.flatMap((f) =>
     evaluateFieldChips(f, ctx, dismissed),
   );
   const live = chips.filter((c) => !c.dismissed);
-  if (live.length === 0) return 1;
-  return live.filter((c) => c.covered).length / live.length;
+  const referenced = referencedFilenames(ctx.brief);
+  const missing = missingReferencedFiles(ctx);
+
+  const total = live.length + referenced.length;
+  if (total === 0) return 1;
+  const covered =
+    live.filter((c) => c.covered).length + (referenced.length - missing.length);
+  return covered / total;
 }
 
 /** Every box has something in it — the gate for enabling Review. */
