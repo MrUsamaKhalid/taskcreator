@@ -75,6 +75,11 @@ export const ENDPOINT_EFFORT: Record<Endpoint, Effort | null> = {
  * - `supportsAdaptiveThinking`: adaptive thinking is a 4.6+ feature. On Haiku 4.5
  *   the `thinking` parameter must be omitted (the older fixed-budget form is
  *   deprecated and not worth reaching for here).
+ * - `supportsFallbacks`: server-side refusal fallback is Opus-tier only. Sending
+ *   it to Sonnet 5 returns `'claude-sonnet-5' does not support the 'fallbacks'
+ *   parameter` — a 400, not a no-op. This is the right shape anyway: fallbacks
+ *   exist for the elevated safety classifiers on Opus 5, and a model without
+ *   them has nothing to fall back from.
  * - `cacheMinTokens`: the minimum cacheable prefix, and it is *not* monotonic
  *   across generations — 512 on Opus 5 but 4096 on Haiku 4.5. Below the
  *   threshold a `cache_control` breakpoint silently does nothing: no error, just
@@ -86,6 +91,7 @@ export const MODEL_CAPS: Record<
   {
     supportsEffort: boolean;
     supportsAdaptiveThinking: boolean;
+    supportsFallbacks: boolean;
     cacheMinTokens: number;
     maxOutputTokens: number;
     contextWindow: number;
@@ -94,6 +100,7 @@ export const MODEL_CAPS: Record<
   "claude-opus-5": {
     supportsEffort: true,
     supportsAdaptiveThinking: true,
+    supportsFallbacks: true,
     cacheMinTokens: 512,
     maxOutputTokens: 128_000,
     contextWindow: 1_000_000,
@@ -101,6 +108,7 @@ export const MODEL_CAPS: Record<
   "claude-sonnet-5": {
     supportsEffort: true,
     supportsAdaptiveThinking: true,
+    supportsFallbacks: false,
     cacheMinTokens: 1024,
     maxOutputTokens: 128_000,
     contextWindow: 1_000_000,
@@ -108,6 +116,7 @@ export const MODEL_CAPS: Record<
   "claude-haiku-4-5": {
     supportsEffort: false,
     supportsAdaptiveThinking: false,
+    supportsFallbacks: false,
     cacheMinTokens: 4096,
     maxOutputTokens: 64_000,
     contextWindow: 200_000,

@@ -55,7 +55,8 @@ export type ShapedRequest = {
   model: ModelId;
   max_tokens: number;
   betas: string[];
-  fallbacks: "default";
+  /** Absent on models that reject the parameter. See MODEL_CAPS.supportsFallbacks. */
+  fallbacks?: "default";
   /** Absent on the test run, which must not carry the reviewing-engine persona. */
   system?: Array<{ type: "text"; text: string }>;
   messages: Array<{ role: "user"; content: ContentBlock[] }>;
@@ -82,11 +83,16 @@ export type ShapedRequest = {
  * - The Files API beta is sent only when a block actually cites a file_id. It is
  *   required on any request that does, and pointless on any that doesn't.
  *
- * `fallbacks: "default"` is always on. Opus 5's safety classifiers can decline a
- * request and return HTTP 200 with `stop_reason: "refusal"`; the scalar "default"
- * form routes by refusal category so there is no fallback model list to maintain.
- * It pairs specifically with the -07-01 beta header — the -06-01 header gates the
- * array form, and crossing them is itself a 400.
+ * `fallbacks: "default"` goes only to models that accept it, which is Opus 5
+ * alone here. Opus 5's safety classifiers can decline a request and return HTTP
+ * 200 with `stop_reason: "refusal"`; the scalar "default" form routes by refusal
+ * category so there is no fallback model list to maintain. It pairs specifically
+ * with the -07-01 beta header — the -06-01 header gates the array form, and
+ * crossing them is itself a 400.
+ *
+ * Sending it to Sonnet 5 or Haiku 4.5 is also a 400 ("does not support the
+ * `fallbacks` parameter"), so the parameter and its header are gated together:
+ * a header advertising a parameter that isn't there is noise at best.
  */
 export function shapeRequest({
   endpoint,
@@ -103,14 +109,14 @@ export function shapeRequest({
   const caps = MODEL_CAPS[model];
   const effort = ENDPOINT_EFFORT[endpoint];
 
-  const betas: string[] = [BETAS.fallback];
+  const betas: string[] = [];
+  if (caps.supportsFallbacks) betas.push(BETAS.fallback);
   if (citesFiles(blocks)) betas.push(BETAS.files);
 
   const request: ShapedRequest = {
     model,
     max_tokens: Math.min(ENDPOINT_MAX_TOKENS[endpoint], caps.maxOutputTokens),
     betas,
-    fallbacks: "default",
     system: [{ type: "text", text: SHARED_SYSTEM }],
     messages: [
       {
@@ -128,6 +134,7 @@ export function shapeRequest({
   if (Object.keys(outputConfig).length > 0) request.output_config = outputConfig;
 
   if (caps.supportsAdaptiveThinking) request.thinking = { type: "adaptive" };
+  if (caps.supportsFallbacks) request.fallbacks = "default";
 
   return request;
 }
@@ -155,14 +162,14 @@ export function shapeTestRun(blocks: ContentBlock[]): ShapedRequest {
   const caps = MODEL_CAPS[model];
   const effort = ENDPOINT_EFFORT.testRun;
 
-  const betas: string[] = [BETAS.fallback];
+  const betas: string[] = [];
+  if (caps.supportsFallbacks) betas.push(BETAS.fallback);
   if (citesFiles(blocks)) betas.push(BETAS.files);
 
   const request: ShapedRequest = {
     model,
     max_tokens: Math.min(ENDPOINT_MAX_TOKENS.testRun, caps.maxOutputTokens),
     betas,
-    fallbacks: "default",
     // `system` is omitted rather than set empty: the compiled prompt must stand
     // on its own, exactly as it will when the person pastes it somewhere.
     messages: [{ role: "user", content: blocks }],
@@ -170,6 +177,7 @@ export function shapeTestRun(blocks: ContentBlock[]): ShapedRequest {
 
   if (caps.supportsEffort && effort) request.output_config = { effort };
   if (caps.supportsAdaptiveThinking) request.thinking = { type: "adaptive" };
+  if (caps.supportsFallbacks) request.fallbacks = "default";
 
   return request;
 }
