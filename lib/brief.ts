@@ -102,13 +102,34 @@ const LENGTH =
   /\b\d+\s*(?:pages?|words?|slides?|characters?|chars?|minutes?|mins?|seconds?|secs?|paragraphs?|lines?|items?|bullets?|sentences?|rows?)\b/i;
 
 /**
- * Filename-looking tokens mentioned anywhere in the brief.
- * Used to check that everything the brief names has actually been attached.
+ * Boxes that can name an *input* file.
+ *
+ * `what_needed` and `format_specs` describe the artefacts the prompt is meant to
+ * produce, so every filename in them is an output. Scanning those made the panel
+ * demand that the deliverables be attached — "aurelis_reel_9x16.mp4 is missing"
+ * about a file that by definition does not exist yet.
+ */
+const INPUT_NAMING_KEYS: BriefKey[] = [
+  "who_asking",
+  "context",
+  "requirements",
+  "style_brand",
+];
+
+/**
+ * Filename-looking tokens the brief names as inputs.
+ * Used to check that everything the brief refers to has actually been attached.
+ *
+ * The character class must not contain a space. Filenames written in prose never
+ * have one, and allowing it let the match run backwards across whole sentences —
+ * "and compliance. the price and unit count are read from units.csv" was
+ * returned as a single filename, which then matched no attachment and reported
+ * every genuinely-attached file as missing.
  */
 export function referencedFilenames(brief: Brief): string[] {
-  const all = Object.values(brief).join("\n");
-  const matches = all.match(
-    /\b[\w][\w \-.]*\.(?:pdf|png|jpe?g|svg|docx?|xlsx?|csv|pptx?|mp4|mov|mp3|wav|json|md|txt|webp|gif|zip)\b/gi,
+  const scanned = INPUT_NAMING_KEYS.map((key) => brief[key] ?? "").join("\n");
+  const matches = scanned.match(
+    /\b[\w][\w\-.]*\.(?:pdf|png|jpe?g|svg|docx?|xlsx?|csv|pptx?|mp4|mov|mp3|wav|json|md|txt|webp|gif|zip)\b/gi,
   );
   return [...new Set((matches ?? []).map((m) => m.trim().toLowerCase()))];
 }
