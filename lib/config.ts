@@ -34,19 +34,32 @@ export const MODEL: ModelId = "claude-opus-5";
 /**
  * Model per endpoint, tiered by how much judgement the call actually needs.
  *
- * Review and compile are the product: one tells you what's weak about your
- * brief, the other *is* the deliverable. Drafting checklist items from an
- * already-complete brief is structured generation. Grading a finished output
- * against explicit yes/no criteria is close to matching.
+ * Review and compile ran on Opus 5 and moved to Sonnet 5, for two measured
+ * reasons rather than a general preference for cheap:
  *
- * testRun is the odd one out — it should mirror wherever you actually intend to
- * run the finished prompt, because the point is to find out how that model
- * handles it, not how the best available model does.
+ * 1. Opus 5 review took 63.9s against a 60s platform ceiling, so it did not
+ *    merely cost more — it failed, every time, and still billed for the work.
+ * 2. Opus 5 was 98% of spend ($1.90 of $1.93 across a day's use) while doing
+ *    the two jobs Sonnet 5 is closest to Opus on.
+ *
+ * Grading a finished output against explicit yes/no criteria is close to
+ * matching, so it stays on Haiku 4.5.
+ *
+ * testRun is the odd one out and stays on Opus 5 — it should mirror wherever
+ * you actually intend to run the finished prompt, because the point is to find
+ * out how that model handles it, not how the cheapest one does. It is now the
+ * only Opus call in the app, so it is also the one to watch on both time and
+ * cost.
+ *
+ * Side effect worth having: review, compile and checklist now share one model,
+ * so they share one cached brief prefix instead of paying two separate writes.
  */
 export const ENDPOINT_MODEL: Record<Endpoint, ModelId> = {
-  review: "claude-opus-5",
-  compile: "claude-opus-5",
+  review: "claude-sonnet-5",
+  compile: "claude-sonnet-5",
   checklist: "claude-sonnet-5",
+  // Deliberately still Opus 5 — see the note above. This one should mirror
+  // wherever the finished prompt will actually be run, not whatever is cheapest.
   testRun: "claude-opus-5",
   grade: "claude-haiku-4-5",
 };

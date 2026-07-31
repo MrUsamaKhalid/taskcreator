@@ -102,24 +102,92 @@ const LENGTH =
   /\b\d+\s*(?:pages?|words?|slides?|characters?|chars?|minutes?|mins?|seconds?|secs?|paragraphs?|lines?|items?|bullets?|sentences?|rows?)\b/i;
 
 /**
- * Filename-looking tokens mentioned anywhere in the brief.
- * Used to check that everything the brief names has actually been attached.
+ * Boxes that can name an *input* file.
+ *
+ * `what_needed` and `format_specs` describe the artefacts the prompt is meant to
+ * produce, so every filename in them is an output. Scanning those made the panel
+ * demand that the deliverables be attached — "aurelis_reel_9x16.mp4 is missing"
+ * about a file that by definition does not exist yet.
+ */
+const INPUT_NAMING_KEYS: BriefKey[] = [
+  "who_asking",
+  "context",
+  "requirements",
+  "style_brand",
+];
+
+/**
+ * Filename-looking tokens the brief names as inputs.
+ * Used to check that everything the brief refers to has actually been attached.
+ *
+ * The character class must not contain a space. Filenames written in prose never
+ * have one, and allowing it let the match run backwards across whole sentences —
+ * "and compliance. the price and unit count are read from units.csv" was
+ * returned as a single filename, which then matched no attachment and reported
+ * every genuinely-attached file as missing.
  */
 export function referencedFilenames(brief: Brief): string[] {
-  const all = Object.values(brief).join("\n");
-  const matches = all.match(
-    /\b[\w][\w \-.]*\.(?:pdf|png|jpe?g|svg|docx?|xlsx?|csv|pptx?|mp4|mov|mp3|wav|json|md|txt|webp|gif|zip)\b/gi,
+  const scanned = INPUT_NAMING_KEYS.map((key) => brief[key] ?? "").join("\n");
+  const matches = scanned.match(
+    /\b[\w][\w\-.]*\.(?:pdf|png|jpe?g|svg|docx?|xlsx?|csv|pptx?|mp4|mov|mp3|wav|json|md|txt|webp|gif|zip)\b/gi,
   );
   return [...new Set((matches ?? []).map((m) => m.trim().toLowerCase()))];
+}
+
+/**
+ * Files the brief names that nothing attached matches.
+ *
+ * The single source of truth for "is this file here?". The coverage panel used
+ * to run its own slightly different comparison, so the panel and the chip could
+ * disagree about the same file.
+ */
+export function missingReferencedFiles(ctx: ChipContext): string[] {
+  const attached = ctx.attachments.map((a) => a.filename.toLowerCase());
+  return referencedFilenames(ctx.brief).filter(
+    (name) =>
+      !attached.some((f) => f === name || f.endsWith(name) || f.includes(name)),
+  );
+}
+
+/** Words that mark a file as one the finished prompt must tell the AI to skip. */
+const IGNORE_CUE =
+  /\b(ignore|don'?t use|do not use|never use|retired|superseded|outdated|out of date|old|previous|last year'?s|deprecated|wrong)\b/i;
+
+/**
+ * Files the brief says to ignore that are attached as usable material.
+ *
+ * A file's role is set by which dropzone it lands in, and nothing checked that
+ * against what the brief actually says about it. Drop last year's flyer into
+ * Input files while the brief says "ignore q1-2025-flyer.jpg" and the compiled
+ * prompt ends up handing the AI a source it was told to skip — the exact
+ * failure the excluded-files feature exists to prevent.
+ *
+ * Matched per sentence, so "ignore X" only ever flags X, not every filename in
+ * the box.
+ */
+export function ignoredButAttached(ctx: ChipContext): string[] {
+  const prose = INPUT_NAMING_KEYS.map((key) => ctx.brief[key] ?? "").join(" ");
+  const usable = ctx.attachments
+    .filter((a) => a.role !== "excluded")
+    .map((a) => a.filename.toLowerCase());
+
+  const flagged = new Set<string>();
+  for (const sentence of prose.split(/(?<=[.!?])\s+|\n+/)) {
+    if (!IGNORE_CUE.test(sentence)) continue;
+    for (const name of referencedFilenames({ ...EMPTY_BRIEF, context: sentence })) {
+      const hit = usable.find(
+        (f) => f === name || f.endsWith(name) || f.includes(name),
+      );
+      if (hit) flagged.add(hit);
+    }
+  }
+  return [...flagged];
 }
 
 function allReferencedFilesAttached(_value: string, ctx: ChipContext): boolean {
   const referenced = referencedFilenames(ctx.brief);
   if (referenced.length === 0) return ctx.attachments.length > 0;
-  const attached = ctx.attachments.map((a) => a.filename.toLowerCase());
-  return referenced.every((name) =>
-    attached.some((f) => f === name || f.endsWith(name) || f.includes(name)),
-  );
+  return missingReferencedFiles(ctx).length === 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -260,14 +328,27 @@ export function evaluateFieldChips(
   }));
 }
 
-/** How complete the brief looks overall — drives the status dot in the rail. */
+/**
+ * How complete the brief looks overall — drives the status dot in the rail.
+ *
+ * A file the brief names but nobody attached counts against this. Scoring the
+ * six boxes alone let the panel print "Overall 100%" and "Everything is in
+ * place" directly beneath two rows marked missing, which is the one thing a
+ * coverage panel must never do.
+ */
 export function briefCompletion(ctx: ChipContext, dismissed: string[]): number {
   const chips = BRIEF_FIELDS.flatMap((f) =>
     evaluateFieldChips(f, ctx, dismissed),
   );
   const live = chips.filter((c) => !c.dismissed);
-  if (live.length === 0) return 1;
-  return live.filter((c) => c.covered).length / live.length;
+  const referenced = referencedFilenames(ctx.brief);
+  const missing = missingReferencedFiles(ctx);
+
+  const total = live.length + referenced.length;
+  if (total === 0) return 1;
+  const covered =
+    live.filter((c) => c.covered).length + (referenced.length - missing.length);
+  return covered / total;
 }
 
 /** Every box has something in it — the gate for enabling Review. */
