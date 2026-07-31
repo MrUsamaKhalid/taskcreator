@@ -312,11 +312,22 @@ test("grade omits effort AND thinking, because Haiku 4.5 rejects both", () => {
   );
 });
 
-test("review sends adaptive thinking and high effort on Opus 5", () => {
+test("review sends adaptive thinking and high effort on Sonnet 5", () => {
+  // Moved off Opus 5: it took 63.9s against a 60s platform ceiling, so it
+  // failed every time and billed for the work anyway.
   const req = shapeRequest({ endpoint: "review", blocks: ctx(), instruction: "go" });
-  assert.equal(req.model, "claude-opus-5");
+  assert.equal(req.model, "claude-sonnet-5");
   assert.deepEqual(req.thinking, { type: "adaptive" });
   assert.equal(req.output_config?.effort, "high");
+});
+
+test("review, compile and checklist share one model, so they share one cache", () => {
+  // Not cosmetic: caches are scoped per model, so a split here means the same
+  // brief prefix is written twice and read back half as often.
+  const models = (["review", "compile", "checklist"] as const).map(
+    (endpoint) => shapeRequest({ endpoint, blocks: ctx(), instruction: "go" }).model,
+  );
+  assert.deepEqual(new Set(models), new Set(["claude-sonnet-5"]));
 });
 
 test("checklist runs on Sonnet 5 at medium effort", () => {

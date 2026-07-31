@@ -71,7 +71,7 @@ export function ReviewStep({
             ? "Fill every brief box first."
             : cost !== null
               ? `Last run cost ${formatUsd(cost)}`
-              : "Runs on Opus 5. Usually a few cents."
+              : "Runs on Sonnet 5. Usually a few cents."
         }
         onClick={run}
       />
